@@ -1,9 +1,9 @@
 import { BotExecutionActivity, ExecutionBadge } from './BotExecutionActivity';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Banner, Button, Empty, LayerCard, Table, Input, Select, Dialog } from '@cloudflare/kumo';
+import { Banner, Button, LayerCard, Table, Input, Select, Dialog } from '@cloudflare/kumo';
 import { PlusIcon, MagnifyingGlassIcon, ChatCircleTextIcon, GraphIcon, FlaskIcon } from '@phosphor-icons/react';
 import type { BotExecutionOverview, BotSummary, CatbotsDesktopApi } from '@catbots/contracts';
-import { BrandLogo } from '../components/BrandLogo';
+import { BrandIllustration } from '../components/BrandIllustration';
 import { StatusBadge } from '../components/StatusBadge';
 import { CreateDraftBotDialog } from './CreateDraftBotDialog';
 
@@ -147,13 +147,16 @@ export function BotsHomeScreen({ api, connections, onOpenBot }: BotsHomeScreenPr
 
 function EmptyBots({ onCreate }: { onCreate(): void }) {
   return (
-    <div className="bots-welcome"><Empty
-      className="bots-empty-state"
-      icon={<BrandLogo size="large" decorative />}
-      title="No bots yet"
-      description="Start with an idea. Build your strategy with AI, review the logic, and test it before deployment."
-      contents={<Button size="base" type="button" variant="secondary" icon={PlusIcon} onClick={onCreate}>Create new bot</Button>}
-    />
+    <div className="bots-welcome">
+    <section className="brand-welcome" aria-labelledby="empty-bots-heading">
+      <div className="brand-welcome-copy">
+        <p className="brand-welcome-status">No bots yet</p>
+        <h2 id="empty-bots-heading">One idea.<br />Every rule visible.</h2>
+        <p>Describe a trading idea, see how the rules connect, and test your strategy before taking the next step.</p>
+        <Button size="base" type="button" variant="primary" icon={PlusIcon} onClick={onCreate}>Create new bot</Button>
+      </div>
+      <div className="brand-welcome-art"><BrandIllustration /></div>
+    </section>
     <div className="getting-started" aria-label="How it works">
       <div><ChatCircleTextIcon size={22} aria-hidden="true" /><h3>Describe your strategy</h3><p>Give your bot a name, then explain your trading idea in chat.</p></div>
       <div><GraphIcon size={22} aria-hidden="true" /><h3>Review the logic</h3><p>Inspect triggers, conditions, and actions in a visual graph.</p></div>

@@ -75,7 +75,7 @@ export function ChatPanel({ streamingText = '', botId, activities = [], stopping
           setAway(!followRef.current);
         }}>
           {messages.length === 0 && !pending ? <div className="chat-welcome">
-            <SparkleIcon size={24} aria-hidden="true" /><h3>What would you like to build?</h3>
+            <BrandLogo size="large" decorative /><h3>What would you like to build?</h3>
             <p>Describe your trading idea. We’ll work through the rules together.</p>
             <div className="chat-suggestions">{suggestions.map((suggestion) => <Button variant="ghost" size="sm" key={suggestion.label} type="button" onClick={() => { setDraft(suggestion.prompt); inputRef.current?.focus(); }}>{suggestion.label}<ArrowUpIcon aria-hidden="true" /></Button>)}</div>
           </div> : messages.map((message) => <article key={message.id} aria-label={message.role === 'user' ? 'Your message' : 'Catbots response'} className={`chat-message chat-message-${message.role}`}>

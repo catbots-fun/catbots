@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
-import { BrandLogo } from '../components/BrandLogo';
+import { BrandWordmark } from '../components/BrandLogo';
+import { BrandIllustration } from '../components/BrandIllustration';
 import { Banner, Button, Dialog, Input, LayerCard, Select, Switch, Tooltip } from '@cloudflare/kumo';
 import { InfoIcon } from '@phosphor-icons/react';
 import {
@@ -280,10 +281,11 @@ export function SettingsScreen({ connections, api, config, repairIssues, onboard
   return (
     <Root className={onboarding ? 'setup-shell' : 'settings-shell page-container'}>
       <section className="setup-intro" aria-labelledby="settings-heading">
-        <div className="local-mark" aria-hidden="true"><BrandLogo size="large" decorative /></div>
-        <p className="eyebrow">LOCAL WORKSPACE</p>
+        <div className="local-mark"><BrandWordmark /></div>
+        {onboarding && <div className="setup-brand-art"><BrandIllustration /></div>}
         <h1 id="settings-heading">{onboarding ? 'Connect your AI provider' : 'Settings'}</h1>
         <p className="lead">{onboarding ? 'Name this local workspace and add the AI provider Catbots will use to design and backtest your bots.' : 'Update the local profile and AI provider used by this Catbots installation.'}</p>
+        {onboarding && <p className="setup-brand-signoff">Curious by design. Clear by choice.</p>}
       </section>
       {connections}
       <LayerCard render={<section aria-label={onboarding ? 'Local profile setup' : 'Local settings'} />} className="settings-card">

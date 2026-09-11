@@ -1,0 +1,48 @@
+/* Cat-C identity: expressive on arrival, quiet in the trading workspace. */
+.catbots-sidebar [data-sidebar="content-container"] { min-height: 100dvh; }
+.catbots-sidebar,
+.catbots-sidebar [data-sidebar="content-container"],
+.catbots-sidebar [data-sidebar="footer"] { background: var(--cb-sidebar); }
+.catbots-sidebar .kumo-brand-row { width: 100%; flex-wrap: nowrap; justify-content: space-between; }
+.catbots-sidebar [data-sidebar="menu-button"] svg { opacity: .8; }
+.catbots-sidebar [data-sidebar="menu-button"][data-active] { background: var(--cb-brand-cobalt); color: var(--cb-brand-paper); }
+.catbots-sidebar [data-sidebar="menu-button"][data-active] svg { opacity: 1; }
+.catbots-sidebar [data-sidebar="footer"] { height: auto; min-height: 3rem; align-items: stretch; flex-direction: column; gap: var(--cb-space-3); padding-block: var(--cb-space-4); }
+.catbots-sidebar[data-state="collapsed"] [data-sidebar="footer"] { padding-block: var(--cb-space-2); }
+.sidebar-brand-note { display: grid; gap: var(--cb-space-1); padding: var(--cb-space-2); white-space: normal; }
+.sidebar-brand-note strong { font-size: var(--cb-text-section); font-weight: var(--cb-weight-semibold); letter-spacing: var(--cb-tracking-heading); }
+.sidebar-brand-note span { color: var(--cb-ink-muted); font-size: var(--cb-text-caption); }
+.setup-intro .local-mark { width: auto; height: auto; align-self: flex-start; border: 0; background: transparent; color: var(--cb-ink-strong); }
+.setup-shell > .setup-intro { background: var(--cb-brand-butter); color: var(--cb-brand-ink); padding: clamp(2rem, 4vw, 4.5rem); gap: var(--cb-space-6); }
+.setup-shell > .setup-intro .local-mark,
+.setup-shell > .setup-intro h1,
+.setup-shell > .setup-intro .lead { color: var(--cb-brand-ink); }
+.setup-shell > .setup-intro h1 { font-size: var(--cb-text-hero); font-weight: var(--cb-weight-bold); letter-spacing: var(--cb-tracking-brand); max-width: 12ch; }
+.setup-brand-art { margin-inline: calc(-1 * var(--cb-space-6)); }
+.setup-shell > .setup-intro .lead { max-width: 36ch; }
+.setup-brand-signoff { border-top: 1px solid var(--cb-brand-cobalt); padding-top: var(--cb-space-5); color: var(--cb-brand-cobalt); font-size: var(--cb-text-label); font-weight: var(--cb-weight-semibold); }
+.brand-welcome { display: grid; grid-template-columns: 1.05fr 1fr; align-items: center; gap: var(--cb-space-6); margin-bottom: var(--cb-space-10); padding: var(--cb-space-8); background: var(--cb-brand-soft); border-radius: var(--cb-radius-node); overflow: hidden; }
+.brand-welcome-copy { min-width: 0; display: grid; justify-items: start; gap: var(--cb-space-5); }
+.brand-welcome-status { font-size: var(--cb-text-caption); font-weight: var(--cb-weight-semibold); color: var(--cb-brand-soft-ink); }
+.brand-welcome-copy h2 { font-size: var(--cb-text-hero); font-weight: var(--cb-weight-bold); letter-spacing: var(--cb-tracking-brand); line-height: var(--cb-leading-tight); }
+.brand-welcome-copy > p:not(.brand-welcome-status) { max-width: 38ch; font-size: var(--cb-text-body); line-height: var(--cb-leading-relaxed); color: var(--cb-ink-muted); }
+.brand-welcome-art { background: var(--cb-brand-butter); overflow: hidden; border-radius: var(--cb-radius-lg); }
+.bots-welcome .getting-started { max-width: none; }
+.bots-welcome .getting-started svg { color: var(--cb-accent-text); background: var(--cb-selected); box-sizing: content-box; padding: var(--cb-space-3); border-radius: var(--cb-radius-lg); }
+@media (max-width: 1000px) {
+  .brand-welcome { padding: var(--cb-space-6); gap: var(--cb-space-4); }
+}
+@media (max-width: 860px) {
+  .setup-shell > .setup-intro { padding: var(--cb-space-8); display: grid; grid-template-columns: 1fr 1fr; gap: var(--cb-space-4); align-items: center; }
+  .setup-shell > .setup-intro .local-mark { grid-column: 1 / -1; }
+  .setup-brand-art { grid-column: 2; grid-row: 2 / 5; margin: 0; }
+  .setup-shell > .setup-intro h1 { font-size: var(--cb-text-page); }
+  .setup-brand-signoff { grid-column: 1; }
+}
+@media (max-width: 640px) {
+  .brand-welcome { grid-template-columns: 1fr; }
+  .brand-welcome-art { order: -1; max-width: 22rem; justify-self: center; }
+  .setup-shell > .setup-intro { display: flex; padding: var(--cb-space-6); align-items: flex-start; }
+  .setup-brand-art { width: 100%; max-width: 22rem; align-self: center; }
+  .setup-shell > .setup-intro h1 { max-width: none; }
+}

@@ -8,3 +8,5 @@ small { font-size: var(--cb-text-caption); }
 .brand-logo { display: block; flex-shrink: 0; object-fit: contain; background: var(--cb-logo-surface); border-radius: var(--cb-radius-md); }
 .brand-logo-small { width: var(--cb-logo-small); height: var(--cb-logo-small); }
 .brand-logo-large { width: var(--cb-logo-large); height: var(--cb-logo-large); }
+.brand-wordmark { display: inline-flex; align-items: center; gap: var(--cb-space-2); color: var(--text-color-kumo-strong); font-family: var(--cb-font-brand); font-size: var(--cb-text-wordmark); font-weight: var(--cb-weight-bold); letter-spacing: var(--cb-tracking-brand); line-height: var(--cb-leading-tight); white-space: nowrap; }
+.brand-illustration { display: block; width: 100%; height: auto; object-fit: contain; }

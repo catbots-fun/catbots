@@ -16,6 +16,7 @@
   --cb-page-padding-block: 2rem;
   color-scheme: light dark;
   --cb-font-code: ui-monospace, SFMono-Regular, Menlo, monospace;
+  --cb-font-brand: "Arial Rounded MT Bold", "Avenir Next", -apple-system, BlinkMacSystemFont, sans-serif;
   --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --cb-text-caption: .75rem;
   --cb-text-label: .8125rem;
@@ -24,12 +25,16 @@
   --cb-text-section: 1.125rem;
   --cb-text-title: 1.5rem;
   --cb-text-page: 1.75rem;
+  --cb-text-hero: clamp(2rem, 3.2vw, 3.5rem);
+  --cb-text-wordmark: 1.5rem;
   --cb-leading-tight: 1.25;
   --cb-leading-body: 1.5;
   --cb-leading-relaxed: 1.65;
   --cb-weight-regular: 400;
   --cb-weight-medium: 500;
   --cb-weight-semibold: 600;
+  --cb-weight-bold: 800;
+  --cb-tracking-brand: -.055em;
   --cb-tracking-heading: -.025em;
   --cb-tracking-label: .04em;
   --cb-radius-node: 1.5rem;
@@ -51,21 +56,28 @@
   --cb-ease-out: cubic-bezier(.22, 1, .36, 1);
   --cb-z-navigation: 1;
   --cb-z-notice: 10;
-  --cb-logo-surface: light-dark(transparent, #f6f6f6);
+  /* Cat-C identity. Brand colors do not replace semantic risk/status colors. */
+  --cb-brand-cobalt: #2448ff;
+  --cb-brand-butter: #f4f0c8;
+  --cb-brand-ink: #151515;
+  --cb-brand-paper: #fafaf5;
+  --cb-brand-soft: light-dark(#f4f0c8, #252d48);
+  --cb-brand-soft-ink: light-dark(#273eb9, #c6d0ff);
+  --cb-sidebar: light-dark(#f4f2df, #191e30);
+  --cb-logo-surface: transparent;
   --cb-logo-small: 2rem;
   --cb-logo-large: 3.5rem;
-  --cb-surface: light-dark(#fcfcfc, #171717);
-  --cb-panel: light-dark(#f6f6f6, #202020);
-  --cb-tint: light-dark(#f0f0f0, #292929);
-  --cb-selected: light-dark(#e8e8e8, #343434);
-  --cb-border: light-dark(#dedede, #444444);
-  --cb-ink: light-dark(#303030, #eeeeee);
-  --cb-ink-strong: light-dark(#202020, #fafafa);
-  --cb-ink-muted: light-dark(#626262, #b5b5b5);
-  /* Artwork keeps its original orange; UI orange is darker for readable controls. */
-  --cb-accent: #c43c08;
-  --cb-accent-hover: #a93205;
-  --cb-accent-text: light-dark(#b73708, #ffab7f);
+  --cb-surface: light-dark(#fafaf5, #131725);
+  --cb-panel: light-dark(#f3f3eb, #1c2235);
+  --cb-tint: light-dark(#ededdf, #252c42);
+  --cb-selected: light-dark(#e4e9ff, #303b63);
+  --cb-border: light-dark(#d9dbd0, #414a65);
+  --cb-ink: light-dark(#292a31, #eceee8);
+  --cb-ink-strong: light-dark(#151515, #fafaf5);
+  --cb-ink-muted: light-dark(#60635f, #b5bdd0);
+  --cb-accent: var(--cb-brand-cobalt);
+  --cb-accent-hover: #1e3bd4;
+  --cb-accent-text: light-dark(#2448df, #aebdff);
   --text-xs: var(--cb-text-caption);
   --text-sm: var(--cb-text-label);
   --text-base: var(--cb-text-body);
@@ -78,6 +90,7 @@
   --text-xl--line-height: var(--cb-leading-tight);
   --color-kumo-canvas: var(--cb-surface);
   --color-kumo-base: var(--cb-surface);
+  --color-kumo-control: var(--cb-surface);
   --color-kumo-elevated: var(--cb-panel);
   --color-kumo-tint: var(--cb-tint);
   --color-kumo-fill: var(--cb-selected);
@@ -89,4 +102,6 @@
   --text-color-kumo-strong: var(--cb-ink-strong);
   --text-color-kumo-subtle: var(--cb-ink-muted);
   --text-color-kumo-placeholder: var(--cb-ink-muted);
+  --xy-background-color: var(--cb-surface);
+  --xy-background-pattern-dots-color: var(--cb-border);
 }

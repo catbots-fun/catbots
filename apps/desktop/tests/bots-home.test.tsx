@@ -104,7 +104,7 @@ describe('BotsHomeScreen', () => {
     expect(screen.queryByRole('button', { name: 'BTC Flow' })).toBeNull();
     expect(screen.getByRole('button', { name: 'ETH Flow' })).toBeTruthy();
     await user.click(screen.getByRole('combobox', { name: 'Filter by status' }));
-    await user.click(screen.getByRole('option', { name: 'Draft' }));
+    await user.click(await screen.findByRole('option', { name: 'Draft' }));
     expect(screen.getByRole('heading', { name: 'No matching bots' })).toBeTruthy();
     await user.click(screen.getByRole('button', { name: 'Clear filters' }));
     expect(screen.getByRole('button', { name: 'BTC Flow' })).toBeTruthy();
@@ -166,8 +166,8 @@ describe('BotsHomeScreen', () => {
     expect(await screen.findByText('BTC Flow')).toBeTruthy();
     expect(within(screen.getByRole('table', { name: 'Local bots' })).getByText('Draft')).toBeTruthy();
     expect(api.createDraft).toHaveBeenCalledWith({ name: 'BTC Flow', dex: 'hyperliquid' });
-    expect(screen.getByText('PnL unavailable')).toBeTruthy();
-    expect(screen.getByText('Drawdown unavailable')).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: 'Account position' })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: 'Account orders' })).toBeTruthy();
     expect(screen.getByRole('table', { name: 'Local bots' }).parentElement?.className).toContain('ring-kumo-line');
   });
 
@@ -182,16 +182,16 @@ describe('BotsHomeScreen', () => {
     const user = userEvent.setup();
     const list = vi.fn().mockResolvedValueOnce([]).mockRejectedValueOnce(new Error('database /Users/secret/db.sqlite')).mockResolvedValueOnce([]);
     const { rerender } = render(<BotsHomeScreen api={makeApi({ list })} />);
-    const emptyHeading = await screen.findByRole('heading', { name: 'No bots yet' });
-    expect(emptyHeading.parentElement?.className).toContain('border-kumo-fill');
-    expect(screen.getByText(/Start with an idea/i)).toBeTruthy();
+    await screen.findByRole('heading', { name: /One idea\.\s*Every rule visible\./ });
+    expect(screen.getByRole('region', { name: /One idea\.\s*Every rule visible\./ })).toBeTruthy();
+    expect(screen.getByText('No bots yet')).toBeTruthy();
 
     rerender(<BotsHomeScreen api={makeApi({ list })} />);
     expect((await screen.findByRole('alert')).textContent).toContain('We could not load local bots. Try again.');
     expect(document.body.textContent).not.toContain('/Users/secret/db.sqlite');
     await user.click(screen.getByRole('button', { name: 'Try again' }));
     expect(list).toHaveBeenCalledTimes(3);
-    expect(await screen.findByRole('heading', { name: 'No bots yet' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: /One idea\.\s*Every rule visible\./ })).toBeTruthy();
   });
 
   it('merges a draft created while the initial list request is pending', async () => {
@@ -288,9 +288,9 @@ describe('AppShell', () => {
     const onNavigate = vi.fn();
     render(<AppShell destination="bots" onNavigate={onNavigate}><p>Workspace</p></AppShell>);
 
-    expect(screen.getByRole('navigation', { name: 'Global navigation' })).toBeTruthy();
-    expect(screen.getByRole('navigation', { name: 'Global navigation' }).querySelectorAll('button').length).toBe(5);
-    expect(screen.getByRole('button', { name: 'Bots' }).getAttribute('aria-current')).toBe('page');
+    expect(screen.getByRole('list', { name: 'Global navigation' })).toBeTruthy();
+    expect(screen.getByRole('list', { name: 'Global navigation' }).querySelectorAll('button').length).toBe(6);
+    expect(screen.getByRole('button', { name: 'Bots' }).getAttribute('data-active')).toBe('true');
     for (const destination of ['Bots', 'Nodes', 'Data', 'Activity', 'Settings']) {
       expect(screen.getByRole('button', { name: destination })).toBeTruthy();
     }
