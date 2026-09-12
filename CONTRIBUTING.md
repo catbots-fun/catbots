@@ -21,7 +21,7 @@ Run the relevant focused test before changing behavior, then run the full checks
 - Add only named, typed preload methods backed by Main-process validation.
 - The Settings form remains the only in-app writer of `local.env.yaml`; never log or commit credentials.
 - Do not add a master wallet key. Hyperliquid Agent/API-wallet material is local configuration only.
-- M0 has no cloud backend, telemetry, trading, Backtest, strategy execution, or Hyperliquid network calls.
+- Keep AI-provider and Hyperliquid testnet network access in Electron Main, behind the named IPC contracts. Preserve the mainnet execution guard.
 - Preserve close-to-tray behavior; Main owns the native Quit confirmation and orderly runtime shutdown.
 
 The package gate recursively rejects `local.env.yaml` and rollback/temp variants, `.superpowers`, and review/visual artifacts from the app bundle, `app.asar`, and generated ZIP.
