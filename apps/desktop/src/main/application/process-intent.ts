@@ -53,7 +53,9 @@ export function parseProcessIntent(
 ): ProcessIntent {
   if (argv.length === 0 || argv[0].length === 0) return invalid();
 
-  const args = argv.slice(1);
+  const args = argv.slice(1).filter((argument) => (
+    !context.packaged || !isElectronAutomationArgument(argument)
+  ));
   if (args.length === 0 || (args.length === 1 && args[0] === '--open-ui')) {
     return { kind: 'open-ui' };
   }
@@ -82,6 +84,11 @@ export function parseProcessIntent(
   }
 
   return invalid();
+}
+
+function isElectronAutomationArgument(value: string): boolean {
+  return /^--inspect(?:-brk)?(?:=\d+)?$/.test(value)
+    || /^--remote-debugging-port=\d+$/.test(value);
 }
 
 function isCliCommand(value: string | undefined): value is CliCommand {

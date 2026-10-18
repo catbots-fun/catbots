@@ -98,6 +98,7 @@ function installIpcHandlers(dependencies: IpcHandlerDependencies): RegisteredIpc
     ['nodes:command', handlers.nodePackageCommand],
     ['providers:command', handlers.providerCommand],
     ['app:get-version', handlers.getVersion],
+    ['app:get-capabilities', handlers.getProductCapabilities],
     ['app:show-main-window', handlers.showMainWindow],
     ['app:quit-application', handlers.quitApplication],
     ['config:get-bootstrap-state', handlers.getBootstrapState],

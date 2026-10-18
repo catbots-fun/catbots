@@ -26,6 +26,7 @@ export async function createWebApi(): Promise<CatbotsDesktopApi> {
   return {
     app: {
       getVersion: () => invoke('app:get-version'),
+      getCapabilities: () => invoke('app:get-capabilities'),
       showMainWindow: () => invoke('app:show-main-window'),
       quitApplication: () => invoke('app:quit-application'),
     },

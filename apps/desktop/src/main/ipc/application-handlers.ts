@@ -1,5 +1,5 @@
 import { fetchMarketSnapshot, fetchMarketCatalog } from '../nodes/market-snapshot';
-import { NodePackageCommandSchema } from '@catbots/contracts';
+import { ConnectionCommandSchema, NodePackageCommandSchema } from '@catbots/contracts';
 import { toRendererSafeTraceDetails } from '../../shared/trace-projection';
 import {
   CreateDraftBotInputSchema,
@@ -17,6 +17,7 @@ import {
   RunWorkbenchBacktestInputSchema,
   LivePreflightViewSchema,
   PaperDeploymentViewSchema,
+  ProductCapabilitiesSchema,
   PauseDeploymentInputSchema,
   PrepareLiveInputSchema,
   StartLiveInputSchema,
@@ -36,6 +37,7 @@ import {
   type DatabaseState,
   type LocalConfig,
   type LocalSettingsPatch,
+  type ProductCapabilities,
   type RuntimeStatus,
   type TraceDetail,
 } from '@catbots/contracts';
@@ -74,6 +76,7 @@ type ApplicationPort = {
 };
 
 export type IpcHandlerDependencies = {
+  capabilities: ProductCapabilities;
   app: ApplicationPort;
   connections?: import('../connections/service').ConnectionsService;
   nodePackages?: Pick<import('../nodes/package-service').NodePackageService, 'command'>;
@@ -90,7 +93,14 @@ export type ApplicationHandlers = ReturnType<typeof createApplicationHandlers>;
 
 export function createApplicationHandlers(dependencies: IpcHandlerDependencies) {
   return {
-    connectionCommand: async (input: unknown) => { if (!dependencies.connections) throw new IpcRequestError('NODE_PACKAGE_OPERATION_FAILED'); return dependencies.connections.command(input); },
+    connectionCommand: async (input: unknown) => {
+      const command = parseRequest(ConnectionCommandSchema, input);
+      if (!dependencies.capabilities.exchangeConnections && !isExecutionRecoveryCommand(command.action)) {
+        throw new IpcRequestError('EXECUTION_NOT_AVAILABLE');
+      }
+      if (!dependencies.connections) throw new IpcRequestError('NODE_PACKAGE_OPERATION_FAILED');
+      return dependencies.connections.command(command);
+    },
     nodePackageCommand: async (input: unknown) => {
       try { const command = NodePackageCommandSchema.parse(input); if (command.action === 'market_catalog') return { packages: [], markets: await fetchMarketCatalog() }; if (command.action === 'market_snapshot') return { packages: [], marketSnapshot: await fetchMarketSnapshot(command) }; if (!dependencies.nodePackages) throw new Error(); return dependencies.nodePackages.command(input); } catch { throw new IpcRequestError('NODE_PACKAGE_OPERATION_FAILED'); }
     },
@@ -107,6 +117,9 @@ export function createApplicationHandlers(dependencies: IpcHandlerDependencies) 
         throw new IpcRequestError('APP_VERSION_FAILED');
       }
     },
+
+    getProductCapabilities: async (): Promise<ProductCapabilities> =>
+      ProductCapabilitiesSchema.parse(dependencies.capabilities),
 
     showMainWindow: async (): Promise<void> => {
       try {
@@ -138,6 +151,9 @@ export function createApplicationHandlers(dependencies: IpcHandlerDependencies) 
 
     patchLocalSettings: async (input: unknown) => {
       const patch = parseRequest(LocalSettingsPatchSchema, input);
+      if (!dependencies.capabilities.exchangeConnections && patch.exchanges !== undefined) {
+        throw new IpcRequestError('EXECUTION_NOT_AVAILABLE');
+      }
       try {
         return await dependencies.configRepository.patchSettings(patch);
       } catch (error) {
@@ -274,6 +290,7 @@ export function createApplicationHandlers(dependencies: IpcHandlerDependencies) 
 
     startPaperDeployment: async (input: unknown) => {
       const request = parseRequest(StartPaperInputSchema, input);
+      assertCapability(dependencies.capabilities.paperExecution);
       let deploymentId: string | undefined;
       try {
         const deployment = await dependencies.deploymentService.startPaper(request, new AbortController().signal);
@@ -325,6 +342,7 @@ export function createApplicationHandlers(dependencies: IpcHandlerDependencies) 
 
     prepareLiveDeployment: async (input: unknown) => {
       const request = parseRequest(PrepareLiveInputSchema, input);
+      assertCapability(dependencies.capabilities.liveExecution);
       try {
         return LivePreflightViewSchema.parse(
           await dependencies.deploymentService.prepareLive(request, new AbortController().signal),
@@ -336,6 +354,7 @@ export function createApplicationHandlers(dependencies: IpcHandlerDependencies) 
 
     startLiveDeployment: async (input: unknown) => {
       const request = parseRequest(StartLiveInputSchema, input);
+      assertCapability(dependencies.capabilities.liveExecution);
       let deploymentId: string | undefined;
       try {
         const deployment = await dependencies.deploymentService.startLive(request);
@@ -392,6 +411,14 @@ export function createApplicationHandlers(dependencies: IpcHandlerDependencies) 
       return DatabaseStateSchema.parse({ status: 'ready' });
     },
   };
+}
+
+function assertCapability(enabled: boolean): void {
+  if (!enabled) throw new IpcRequestError('EXECUTION_NOT_AVAILABLE');
+}
+
+function isExecutionRecoveryCommand(action: string): boolean {
+  return ['list', 'bot_overview', 'get_flow_runtime', 'get_target', 'reconcile_flow', 'stop_flow'].includes(action);
 }
 
 function parseRequest<T>(schema: { safeParse(input: unknown): { success: boolean; data?: T } }, input: unknown): T {

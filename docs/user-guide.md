@@ -33,7 +33,7 @@ For LM Studio, a typical OpenAI-compatible configuration is:
 
 With LM Studio running and a model loaded, run the optional real-model acceptance test with `pnpm test:lmstudio`. Override its defaults with `CATBOTS_LMSTUDIO_URL` and `CATBOTS_LMSTUDIO_MODEL`.
 
-Hyperliquid testnet additionally requires the master account's public address and a dedicated Agent/API Wallet private key. Never give Catbots a master-wallet private key. Credentials remain in Electron Main and are excluded from renderer DTOs, Agent prompts, traces, logs, and diagnostics.
+Strategy Lab Beta hides exchange settings and rejects exchange configuration in the backend. A future Hyperliquid testnet release will require the master account's public address and a dedicated Agent/API Wallet private key. Never give Catbots a master-wallet private key. Credentials remain in Electron Main and are excluded from renderer DTOs, Agent prompts, traces, logs, and diagnostics.
 
 ## Running Catbots
 
@@ -51,7 +51,9 @@ The browser talks to a loopback-only HTTP backend using an HttpOnly, SameSite se
 
 `dev:preview` is separate: the browser preview uses in-memory fixtures, resets on reload, retains no API keys, and performs no YAML, SQLite, runtime, or exchange operations. Use the Electron application for persistence and native integration testing.
 
-Paper simulates the selected DEX locally. Hyperliquid Live mode uses the approved Strategy 2.0 revision, a fresh market universe, explicit Live review, and the configured testnet Agent Wallet. Both modes use DEX-wide market access plus per-market and shared portfolio controls. Details are in [Dynamic markets](dynamic-markets.md#paper-and-hyperliquid-testnet).
+Strategy Lab Beta supports Chat, Flow, and historical Backtest. It hides Paper, deployment, performance, logs, exchange connections, and Hyperliquid testnet settings. The backend also rejects commands that start Paper or Live execution, connect an exchange, or save exchange credentials. Read-only and stop commands remain available so that a user can inspect or stop an older deployment after an upgrade.
+
+Paper and Hyperliquid testnet implementations remain in the source for validation. They are not enabled in Strategy Lab Beta. Details are in [Dynamic markets](dynamic-markets.md#paper-and-hyperliquid-testnet).
 
 ## Architecture and security
 

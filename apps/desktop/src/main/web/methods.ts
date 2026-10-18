@@ -5,6 +5,7 @@ export const webMethods = {
   'nodes:command': 'nodePackageCommand',
   'providers:command': 'providerCommand',
   'app:get-version': 'getVersion',
+  'app:get-capabilities': 'getProductCapabilities',
   'app:show-main-window': 'showMainWindow',
   'app:quit-application': 'quitApplication',
   'config:get-bootstrap-state': 'getBootstrapState',

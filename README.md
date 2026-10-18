@@ -23,7 +23,7 @@ Describe the trade you have in mind. Catbots helps turn it into a visual flow, s
 - **Test before deploying.** Review backtest results, dataset coverage, and execution traces.
 - **Keep your workspace local.** Bots, configuration, and runtime data live on your computer. You choose the AI provider; chat requests go to that provider.
 
-Catbots currently targets **macOS and Hyperliquid perpetual markets**. Lighter and Aster adapters are planned but are not supported yet. It is experimental software with Paper and guarded testnet execution. **Mainnet is disabled.**
+Catbots currently targets **macOS and Hyperliquid perpetual markets**. The default release is **Strategy Lab Beta**. You can create a strategy, inspect its flow, and run a historical backtest. Paper, testnet, and mainnet execution are disabled in this release. Lighter and Aster adapters are planned but are not supported yet.
 
 ## Quick start
 
@@ -61,10 +61,10 @@ Close that long when RSI is above 80. Do not open shorts.
 Backtest the strategy and explain the results.
 ```
 
-This is an example to explore the workflow, not a recommended trading strategy. The AI can propose and test rules; **you approve the revision and choose whether to deploy it**.
+This is an example to explore the workflow, not a recommended trading strategy. The AI can propose and test rules. You decide whether to approve a revision.
 
 > [!NOTE]
-> Starting Paper or testnet initializes a deployment and leaves it waiting. The normal app does not yet include autonomous interval scheduling or market-trigger ingestion. Starting alone does not produce evaluations or orders. See [deployment start and trigger ingestion](docs/dynamic-markets.md#deployment-start-and-trigger-ingestion).
+> Strategy Lab Beta does not connect to an exchange or place orders. Paper and Hyperliquid testnet code remain behind a release capability gate while runtime scheduling, recovery, and release validation continue.
 
 <details>
 <summary><strong>Prefer a browser workspace or a UI-only preview?</strong></summary>
@@ -105,7 +105,7 @@ Still stuck? [Open an issue](https://github.com/catbots-fun/catbots/issues) with
 | Visual strategy builder | Versioned rules, combined conditions, indicators, and actions |
 | Dynamic markets | Focus on one symbol or screen the selected DEX's active perpetual markets |
 | Backtesting | Deterministic evaluation, per-market results, and execution traces |
-| Paper and testnet | Review deployment scope and risk limits before starting |
+| Execution safety gate | Blocks Paper, exchange connections, and testnet orders in Strategy Lab Beta |
 | Your AI provider | Compatible API endpoints, local models, and supported provider sign-in flows |
 | Community nodes | Install the Funding Filter starter or import reusable subflow manifests |
 
@@ -121,8 +121,8 @@ Each milestone must deliver a workflow that a user can complete. A milestone is 
 | --- | --- | --- |
 | M0 · Local foundation | Create a local profile, connect an AI provider, and keep bot data on the user's computer. | Implemented in source |
 | M1 · AI strategy studio | Describe a strategy in chat, inspect its trigger-condition-action graph, and run a reproducible backtest. | Implemented in source |
-| M2 · Reliable Paper trading | Start and stop a Paper bot, inspect every evaluation and action, and review its performance. | Implemented; reliability validation continues |
-| M3 · Hyperliquid Testnet alpha | Connect a dedicated Agent/API Wallet and test the full order lifecycle with recovery and reconciliation. | In validation |
+| M2 · Reliable Paper trading | Start and stop a Paper bot, inspect every evaluation and action, and review its performance. | In validation; disabled in Strategy Lab Beta |
+| M3 · Hyperliquid Testnet alpha | Connect a dedicated Agent/API Wallet and test the full order lifecycle with recovery and reconciliation. | In validation; disabled in Strategy Lab Beta |
 | M4 · Public local beta | Install, run, update, and remove the signed macOS app without Node.js or pnpm. Mainnet remains unavailable. | In progress |
 | M5 · Guarded Mainnet | Enable real-money execution only after key custody, risk limits, reconciliation, and recovery pass a separate release review. | Planned |
 | M6 · More perpetual DEX adapters | Add Lighter and Aster through the venue-neutral adapter contract. A bot remains bound to one DEX and can trade any supported perpetual market on that DEX. | Planned |
@@ -133,9 +133,9 @@ Hyperliquid remains the reference adapter. Lighter and Aster must pass the same 
 ## Know what you are running
 
 - **macOS-only for this release.** Windows, Linux, spot, options, and cross-DEX routing are outside the current scope.
-- **Testnet only for exchange execution.** Hyperliquid Live mode sends orders to testnet; mainnet is disabled.
+- **Execution is disabled in Strategy Lab Beta.** The app blocks Paper starts, exchange connections, and Hyperliquid testnet orders in both the UI and the backend.
 - **Bring your own AI access.** Provider terms, model availability, and usage charges apply. Local storage does not mean remote AI requests stay on your device.
-- **Use a dedicated Agent/API Wallet for testnet.** Never provide a master-wallet private key. See [configuration and credential handling](docs/user-guide.md#configuration).
+- **Use a dedicated Agent/API Wallet in a future testnet release.** Never provide a master-wallet private key. See [configuration and credential handling](docs/user-guide.md#configuration).
 - **Backtests are evidence to inspect, not a promise.** Paper and historical results do not predict future performance. Catbots is experimental trading software, not financial advice.
 
 ## Build with us

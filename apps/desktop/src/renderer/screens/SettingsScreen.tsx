@@ -19,7 +19,7 @@ import { SecretField } from '../components/SecretField';
 
 type Provider = LocalConfig['llm']['provider'];
 type ReasoningEffortSetting = 'auto' | OpenAiReasoningEffort;
-type SettingsScreenProps = { connections?: ReactNode; api: CatbotsDesktopApi['config']; config?: RedactedLocalConfig; repairIssues?: ReadonlyArray<{ path: string; message: string }>; onboarding?: boolean; embedded?: boolean; onSaved?(config: RedactedLocalConfig): void };
+type SettingsScreenProps = { connections?: ReactNode; api: CatbotsDesktopApi['config']; config?: RedactedLocalConfig; repairIssues?: ReadonlyArray<{ path: string; message: string }>; onboarding?: boolean; embedded?: boolean; showExchangeSettings?: boolean; onSaved?(config: RedactedLocalConfig): void };
 type FormState = {
   profileName: string; telemetry: boolean; provider: Provider; baseUrl: string; apiKey: string;
   model: string; reasoningEffort: ReasoningEffortSetting;
@@ -89,7 +89,7 @@ function validate(state: FormState, requiresApiKey: boolean): FormErrors {
   return errors;
 }
 
-function toSettingsPatch(state: FormState, config?: RedactedLocalConfig): LocalSettingsPatch {
+function toSettingsPatch(state: FormState, config?: RedactedLocalConfig, includeExchangeSettings = true): LocalSettingsPatch {
   return {
     profile: { name: state.profileName.trim(), telemetry: state.telemetry },
     llm: {
@@ -101,19 +101,19 @@ function toSettingsPatch(state: FormState, config?: RedactedLocalConfig): LocalS
         : {}),
       ...(state.apiKey.length === 0 ? {} : { apiKey: state.apiKey }),
     },
-    ...(state.hyperliquidEnabled ? { exchanges: {
+    ...(includeExchangeSettings && state.hyperliquidEnabled ? { exchanges: {
       hyperliquid: {
         network: 'testnet',
         accountAddress: state.hyperliquidAccount.trim(),
         ...(state.hyperliquidAgentKey.length === 0 ? {} : { agentPrivateKey: state.hyperliquidAgentKey }),
       },
-    } } : config?.exchanges.hyperliquid === undefined ? {} : { exchanges: { hyperliquid: null } }),
+    } } : !includeExchangeSettings || config?.exchanges.hyperliquid === undefined ? {} : { exchanges: { hyperliquid: null } }),
   };
 }
 
 function getSafeRepairPaths(issues: SettingsScreenProps['repairIssues']): string[] { return [...new Set((issues ?? []).flatMap((issue) => SAFE_REPAIR_PATHS.has(issue.path) ? [issue.path] : []))]; }
 
-export function SettingsScreen({ connections, api, config, repairIssues, onboarding = false, embedded = false, onSaved }: SettingsScreenProps) {
+export function SettingsScreen({ connections, api, config, repairIssues, onboarding = false, embedded = false, showExchangeSettings = true, onSaved }: SettingsScreenProps) {
   const [showCompatible, setShowCompatible] = useState(!connections);
   const [form, setForm] = useState<FormState>(() => formFromConfig(config));
   const [errors, setErrors] = useState<FormErrors>({});
@@ -183,7 +183,7 @@ export function SettingsScreen({ connections, api, config, repairIssues, onboard
     const submittedProviderRevision = providerRevisionRef.current;
     const submittedConnectionBinding = connectionApprovalBinding(form, replacementKeyRevisionRef.current);
     if (submittedConnectionBinding === null) return false;
-    const submittedPatch = toSettingsPatch(form, config);
+    const submittedPatch = toSettingsPatch(form, config, showExchangeSettings);
     isTestingRef.current = true;
     setTestedConnectionBinding(null);
     setIsTesting(true);
@@ -208,7 +208,7 @@ export function SettingsScreen({ connections, api, config, repairIssues, onboard
     const token = saveRequestTokenRef.current + 1;
     saveRequestTokenRef.current = token;
     const submittedRevision = formRevisionRef.current;
-    const submittedPatch = toSettingsPatch(form, config);
+    const submittedPatch = toSettingsPatch(form, config, showExchangeSettings);
     isSavingRef.current = true;
     setIsSaving(true);
     try {
@@ -236,7 +236,7 @@ export function SettingsScreen({ connections, api, config, repairIssues, onboard
     saveRequestTokenRef.current = saveToken;
     const submittedRevision = formRevisionRef.current;
     const submittedProviderRevision = providerRevisionRef.current;
-    const submittedPatch = toSettingsPatch(form, config);
+    const submittedPatch = toSettingsPatch(form, config, showExchangeSettings);
     isTestingRef.current = true;
     setTestedConnectionBinding(null);
     setIsTesting(true);
@@ -288,6 +288,7 @@ export function SettingsScreen({ connections, api, config, repairIssues, onboard
         {onboarding && <p className="setup-brand-signoff">Curious by design. Clear by choice.</p>}
       </section>
       {connections}
+      {!showExchangeSettings && !onboarding ? <Banner variant="default" title="Strategy Lab Beta" description="Chat, visual flows, and historical Backtests are available. Trading execution is disabled in this release." /> : null}
       <LayerCard render={<section aria-label={onboarding ? 'Local profile setup' : 'Local settings'} />} className="settings-card">
         {repairIssues === undefined ? null : <Banner variant="alert" title="Configuration repair" description={safeRepairPaths.length === 0 ? 'Re-enter the local profile and provider values to repair this configuration.' : <>Review these safe settings fields: {safeRepairPaths.map((path) => <code key={path}>{path}</code>)}</>} />}
         <header className="form-heading"><p className="eyebrow">LOCAL CONFIGURATION</p><h2>{onboarding ? 'Set up Catbots' : 'Profile & execution settings'}</h2><p>{onboarding ? 'Connect once to verify these details, save them locally, and open your bot workspace.' : 'A successful connection test is required before these provider values can be saved.'}</p></header>
@@ -306,7 +307,7 @@ export function SettingsScreen({ connections, api, config, repairIssues, onboard
           {errors.model === undefined ? null : <p id="model-error" role="alert">{errors.model}</p>}
           {form.provider === 'openai-compatible' ? <Select<ReasoningEffortSetting> size="base" label="Reasoning effort" value={form.reasoningEffort} onValueChange={(value) => updateForm('reasoningEffort', value as ReasoningEffortSetting)} disabled={isSaving}><Select.Option value="auto">Auto</Select.Option><Select.Option value="none">Off</Select.Option><Select.Option value="low">Low</Select.Option><Select.Option value="medium">Medium</Select.Option><Select.Option value="high">High</Select.Option></Select> : null}
           </div>
-          {onboarding ? null : <section className="exchange-settings" aria-labelledby="hyperliquid-settings-title">
+          {onboarding || !showExchangeSettings ? null : <section className="exchange-settings" aria-labelledby="hyperliquid-settings-title">
             <div><p className="eyebrow">LIVE EXECUTION</p><h3 id="hyperliquid-settings-title">Hyperliquid testnet</h3><p>Optional. Use a dedicated Agent/API Wallet. Mainnet is disabled.</p></div>
             <Switch label="Enable Hyperliquid testnet" checked={form.hyperliquidEnabled} onCheckedChange={(value) => updateForm('hyperliquidEnabled', value)} required={false} disabled={isSaving} />
             {form.hyperliquidEnabled ? <>

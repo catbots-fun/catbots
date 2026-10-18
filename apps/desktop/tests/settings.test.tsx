@@ -44,6 +44,28 @@ describe('SettingsScreen', () => {
     expect(screen.getByRole('button', { name: 'Connect & continue' })).toBeTruthy();
   });
 
+  it('does not resubmit stored exchange settings when the release hides exchange configuration', async () => {
+    const user = userEvent.setup();
+    const configWithExchange: RedactedLocalConfig = {
+      ...redactedConfig,
+      exchanges: {
+        hyperliquid: {
+          network: 'testnet',
+          accountAddress: '0x0123456789abcdef0123456789abcdef01234567',
+          agentPrivateKey: '••••••••',
+        },
+      },
+    };
+    const api = makeApi();
+    render(<SettingsScreen api={api} config={configWithExchange} showExchangeSettings={false} />);
+
+    await user.click(screen.getByRole('button', { name: 'Test connection' }));
+    await user.click(screen.getByRole('button', { name: 'Save settings' }));
+
+    expect(api.testLlmConnection).toHaveBeenCalledWith(expect.not.objectContaining({ exchanges: expect.anything() }));
+    expect(api.patchSettings).toHaveBeenCalledWith(expect.not.objectContaining({ exchanges: expect.anything() }));
+  });
+
   it('saves an explicit reasoning effort as part of the tested provider configuration', async () => {
     const user = userEvent.setup();
     const api = makeApi();

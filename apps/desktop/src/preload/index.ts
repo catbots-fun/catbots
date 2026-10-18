@@ -15,6 +15,7 @@ ipcRenderer.on('workbench:activity', (_event, activity: AgentToolActivity) => {
 const catbots: CatbotsDesktopApi = deepFreeze({
   app: {
     getVersion: (): Promise<string> => ipcRenderer.invoke('app:get-version'),
+    getCapabilities: () => ipcRenderer.invoke('app:get-capabilities'),
     showMainWindow: (): Promise<void> => ipcRenderer.invoke('app:show-main-window'),
     quitApplication: (): Promise<void> => ipcRenderer.invoke('app:quit-application'),
   },

@@ -37,6 +37,7 @@ import { startServiceHost } from './service/service-host';
 import { createServiceIdentity, createServiceReleaseIdentity } from './service/runtime-identity';
 import { currentDataSchemaVersion } from './storage/migrations';
 import { MaintenanceCoordinator } from './maintenance/maintenance-coordinator';
+import { strategyLabCapabilities } from '../shared/product-capabilities';
 
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
 declare const MAIN_WINDOW_VITE_NAME: string;
@@ -178,6 +179,7 @@ if (ownsApplicationInstance) void app.whenReady()
     runtime.start();
     startupPhase = 'ipc';
     const serviceDependencies: IpcHandlerDependencies = {
+      capabilities: strategyLabCapabilities,
       app: {
         getVersion: () => app.getVersion(),
         showMainWindow: openMainWindow,

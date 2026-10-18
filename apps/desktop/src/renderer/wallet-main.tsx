@@ -43,7 +43,7 @@ function WalletApproval() {
       <p>{challenge?.environment === 'production' ? 'Mainnet · Real funds' : 'Testnet · Test funds'}</p>
       <p>Main wallet: {challenge?.owner ?? 'Loading…'}</p>
       <p>Approve an API wallet for 30 days. Permission may cover this wallet’s subaccounts. This does not start a bot.</p>
-      <Button variant="primary" disabled={!challenge || busy} loading={busy} onClick={() => void sign()}>Approve in wallet</Button>
+      <Button size="base" variant="primary" disabled={!challenge || busy} loading={busy} onClick={() => void sign()}>Approve in wallet</Button>
     </>}
     {error && <Banner variant="error" title="Authorization not completed" description={error}/>}
   </LayerCard></main>;
