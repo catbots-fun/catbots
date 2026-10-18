@@ -38,6 +38,7 @@ export class ConnectionsService {
     return value;
   }
   private starting = new Set<string>();
+  private reconciling = new Map<string, string>();
   private connections: ExchangeConnection[] = [];
   constructor(
     private path: string,
@@ -57,7 +58,7 @@ export class ConnectionsService {
   }
   assertBotRemovable(botId:string) {
     const run=this.runner.get(botId);
-    if(this.starting.has(botId)||run && ['running','stopping','interrupted'].includes(run.status)) throw new Error('BOT_ACTIVE');
+    if(this.starting.has(botId)||this.reconciling.has(botId)||run && ['running','stopping','interrupted'].includes(run.status)) throw new Error('BOT_ACTIVE');
     if(this.runner.botUnresolved(botId)) throw new Error('BOT_UNRESOLVED');
   }
   async dispose() {
@@ -267,20 +268,29 @@ export class ConnectionsService {
         history: this.runner.history(input.botId),
       };
     if (input.action === "reconcile_flow") {
+      if (this.reconciling.has(input.botId))
+        throw new Error("Reconciliation already in progress");
       const deployment = this.runner.get(input.botId);
       const connection = this.connections.find(
         (item) => item.id === deployment?.target.connectionId,
       );
       if (!deployment || !connection || !this.authorization)
         throw new Error("Saved deployment unavailable");
-      const key = await this.authorization.executionKey(connection);
-      return {
-        ...this.view(),
-        deployment: await this.runner.reconcile(
-          input.botId,
-          new HyperliquidFlowVenue(connection, deployment.target, key),
-        ),
-      };
+      if (this.botExists && !this.botExists(input.botId))
+        throw new Error("Bot no longer exists. Reload the bot list.");
+      this.reconciling.set(input.botId, connection.id);
+      try {
+        const key = await this.authorization.executionKey(connection);
+        return {
+          ...this.view(),
+          deployment: await this.runner.reconcile(
+            input.botId,
+            new HyperliquidFlowVenue(connection, deployment.target, key),
+          ),
+        };
+      } finally {
+        this.reconciling.delete(input.botId);
+      }
     }
     if (input.action === "stop_flow")
       return {
@@ -381,18 +391,90 @@ export class ConnectionsService {
       return this.view();
     }
     if (input.action === "remove") {
-      if (this.runner.connectionUnsafe(input.id))
-        throw new Error(
-          "This connection has an active or unresolved deployment. Stop and reconcile it before removing the connection.",
-        );
       const targets = this.readTargets();
       const selected = Object.entries(targets).filter(
         ([, target]) => target.connectionId === input.id,
       );
+      const unresolved = this.runner.connectionUnresolvedTargets(input.id);
+      const locallyUnsafe = () =>
+        this.runner.connectionActive(input.id) ||
+        [...this.reconciling.values()].includes(input.id) ||
+        selected.some(([botId]) => this.starting.has(botId)) ||
+        unresolved.some((target) => this.starting.has(target.botId));
+      if (locallyUnsafe())
+        throw new Error(
+          "This connection has an active or unresolved deployment. Stop and reconcile it before removing the connection.",
+        );
       if (selected.some(([botId]) => this.botExists?.(botId) ?? true))
         throw new Error(
           "This connection is selected by a bot. Change its execution target before removing it.",
         );
+      if (unresolved.some((target) => this.botExists?.(target.botId) ?? true))
+        throw new Error(
+          "This connection has an active or unresolved deployment. Stop and reconcile it before removing the connection.",
+        );
+      if (unresolved.length > 0) {
+        const connection = this.connections.find((item) => item.id === input.id);
+        const adapter = this.adapters.find(
+          (item) => item.descriptor.id === connection?.adapterId,
+        );
+        if (!connection || !adapter?.activity)
+          throw new Error(
+            "This connection has an active or unresolved deployment. Stop and reconcile it before removing the connection.",
+          );
+        const checks = new Map<string, Promise<ExchangeActivity>>();
+        try {
+          for (const target of unresolved) {
+            const account = connection.accounts.find(
+              (item) => item.id.toLowerCase() === target.accountId.toLowerCase(),
+            );
+            if (!account) throw new Error("Account unavailable");
+            const key = account.id.toLowerCase();
+            if (!checks.has(key))
+              checks.set(
+                key,
+                adapter.activity(account.address, connection.environment),
+              );
+          }
+          const activity = await Promise.all(checks.values());
+          if (
+            activity.some(
+              (snapshot) =>
+                !Array.isArray(snapshot.positions) ||
+                !Array.isArray(snapshot.orders) ||
+                snapshot.positions.length > 0 ||
+                snapshot.orders.length > 0,
+            )
+          )
+            throw new Error("Account is not flat");
+        } catch {
+          throw new Error(
+            "This connection has an active or unresolved deployment. Stop and reconcile it before removing the connection.",
+          );
+        }
+        const latestTargets = this.readTargets();
+        const latestSelected = Object.entries(latestTargets).filter(
+          ([, target]) => target.connectionId === input.id,
+        );
+        if (latestSelected.some(([botId]) => this.botExists?.(botId) ?? true))
+          throw new Error(
+            "This connection is selected by a bot. Change its execution target before removing it.",
+          );
+        const latestUnresolved = this.runner.connectionUnresolvedTargets(input.id);
+        if (
+          locallyUnsafe() ||
+          latestSelected.some(([botId]) => this.starting.has(botId)) ||
+          latestUnresolved.some((target) => this.starting.has(target.botId)) ||
+          JSON.stringify(latestTargets) !== JSON.stringify(targets) ||
+          JSON.stringify(latestUnresolved) !== JSON.stringify(unresolved) ||
+          selected.some(([botId]) => this.botExists?.(botId) ?? true) ||
+          unresolved.some((target) => this.botExists?.(target.botId) ?? true)
+        )
+          throw new Error(
+            "This connection has an active or unresolved deployment. Stop and reconcile it before removing the connection.",
+          );
+      }
+      this.runner.removeTerminalRecords(unresolved.map((target) => target.botId));
       if (selected.length > 0) {
         const orphanIds = new Set(selected.map(([botId]) => botId));
         this.persistTargets(

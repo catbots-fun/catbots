@@ -199,8 +199,11 @@ export class FlowRunner {
     this.persist();
   }
   private persist() {
+    this.persistRecords(this.records);
+  }
+  private persistRecords(records: Record<string, Stored>) {
     mkdirSync(dirname(this.path), { recursive: true });
-    writeFileSync(`${this.path}.tmp`, JSON.stringify(this.records), {
+    writeFileSync(`${this.path}.tmp`, JSON.stringify(records), {
       mode: 0o600,
     });
     renameSync(`${this.path}.tmp`, this.path);
@@ -518,13 +521,53 @@ export class FlowRunner {
     const record = this.records[botId];
     return record !== undefined && this.recordUnresolved(record);
   }
-  connectionUnsafe(connectionId: string) {
+  connectionActive(connectionId: string) {
     return Object.values(this.records).some(
       (record) =>
         record.target.connectionId === connectionId &&
-        (['running', 'stopping', 'interrupted'].includes(record.view.status) ||
-          this.recordUnresolved(record)),
+        ['running', 'stopping', 'interrupted'].includes(record.view.status),
     );
+  }
+  connectionUnresolvedTargets(connectionId: string) {
+    return Object.values(this.records)
+      .filter(
+        (record) =>
+          record.target.connectionId === connectionId &&
+          this.recordUnresolved(record),
+      )
+      .map((record) => structuredClone(record.target));
+  }
+  removeTerminalRecords(botIds: string[]) {
+    const ids = new Set(botIds);
+    const removed = Object.entries(this.records).filter(([botId]) => ids.has(botId));
+    if (
+      removed.some(
+        ([botId, record]) =>
+          this.active.has(botId) ||
+          this.reconciling.has(botId) ||
+          ['running', 'stopping', 'interrupted'].includes(record.view.status),
+      )
+    )
+      throw new Error('Cannot remove an active runtime record');
+    if (removed.length === 0) return;
+    const archivedIds = new Set(this.archives.map((record) => record.view.id));
+    const nextArchives = [
+      ...this.archives,
+      ...removed
+        .map(([, record]) => record)
+        .filter((record) => !archivedIds.has(record.view.id))
+        .map((record) => structuredClone(record)),
+    ];
+    writeFileSync(`${this.path}.history.tmp`, JSON.stringify(nextArchives), {
+      mode: 0o600,
+    });
+    renameSync(`${this.path}.history.tmp`, `${this.path}.history`);
+    this.archives = nextArchives;
+    const next = Object.fromEntries(
+      Object.entries(this.records).filter(([botId]) => !ids.has(botId)),
+    );
+    this.persistRecords(next);
+    this.records = next;
   }
   private recordUnresolved(record: Stored) {
     const expectedPositionKnown = Number.isFinite(record.expectedPosition);
