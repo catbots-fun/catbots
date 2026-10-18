@@ -1,8 +1,10 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
+import type { ServiceIdentity } from './service-identity';
 
 export type WebTransportOptions = {
   port: number;
+  identity?: () => ServiceIdentity;
   invoke(method: string, input: unknown): Promise<unknown>;
   subscribe(send: (event: string, data: unknown) => void): () => void;
   asset(path: string): Promise<{ body: Uint8Array; contentType: string }>;
@@ -14,7 +16,7 @@ export async function startWebServer(options: WebTransportOptions) {
   const token = randomBytes(32).toString('hex');
   const streams = new Set<ServerResponse>();
   const json = (response: ServerResponse, status: number, body: unknown) => {
-    response.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+    response.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
     response.end(JSON.stringify(body));
   };
   const hasSession = (request: IncomingMessage) => {
@@ -25,12 +27,26 @@ export async function startWebServer(options: WebTransportOptions) {
     response.setHeader('X-Content-Type-Options', 'nosniff');
     response.setHeader('X-Frame-Options', 'DENY');
     response.setHeader('Cache-Control', 'no-store');
+    response.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
     const site = request.headers['sec-fetch-site'];
     if (request.headers.host !== authority || (site !== undefined && site !== 'same-origin' && site !== 'none')
       || (request.headers.origin !== undefined && request.headers.origin !== origin)) {
       json(response, 403, { error: 'WEB_ORIGIN_DENIED' }); return;
     }
     const path = request.url ?? '/';
+    if (path === '/api/health') {
+      if (request.method !== 'GET') {
+        response.setHeader('Allow', 'GET');
+        json(response, 405, { error: 'METHOD_NOT_ALLOWED' });
+        return;
+      }
+      if (options.identity === undefined) {
+        json(response, 404, { error: 'HEALTH_UNAVAILABLE' });
+        return;
+      }
+      json(response, 200, options.identity());
+      return;
+    }
     if (path === '/api/session' && request.method === 'GET' && request.headers['x-catbots-client'] === '1') {
       response.setHeader('Set-Cookie', `catbots_session=${token}; HttpOnly; SameSite=Strict; Path=/`);
       json(response, 200, { ready: true }); return;
@@ -72,7 +88,11 @@ export async function startWebServer(options: WebTransportOptions) {
       }
       return;
     }
-    if (request.method !== 'GET' || !path.startsWith('/') || path.startsWith('//')) {
+    if (request.method !== 'GET') {
+      response.setHeader('Allow', 'GET');
+      response.writeHead(405); response.end(); return;
+    }
+    if (!path.startsWith('/') || path.startsWith('//')) {
       response.writeHead(404); response.end(); return;
     }
     try {
