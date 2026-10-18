@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, mkdirSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
@@ -95,6 +95,76 @@ function setup(fail = false) {
     path: join(dir, "runs"),
   };
 }
+it('records start, stop, resume and restart interruption without duplicating interruption on reopen', async () => {
+  vi.useFakeTimers();
+  const {runner,venue,path}=setup();
+  await runner.start(target.botId,1,doc,target,'testnet',venue);
+  await runner.stop(target.botId);
+  await runner.start(target.botId,1,doc,target,'testnet',venue);
+  // Simulate abrupt process loss without invoking graceful stop.
+  vi.clearAllTimers();
+  const restored=new FlowRunner(path);
+  expect(restored.get(target.botId)?.status).toBe('interrupted');
+  const events=new FlowRunner(path).auditHistory(target.botId).filter(row=>row.kind==='lifecycle');
+  expect(events.map(row=>(row.details as {event:string}).event)).toEqual(['started','stop_requested','stopped','resumed','interrupted']);
+});
+
+it('fails closed before scheduling when the start audit cannot be saved',async()=>{
+  vi.useFakeTimers();
+  const {runner,venue,path}=setup();
+  vi.spyOn(FlowAuditStore.prototype,'append').mockImplementation(()=>{throw new Error('private disk path');});
+  await expect(runner.start(target.botId,1,doc,target,'testnet',venue)).rejects.toThrow('audit');
+  await vi.advanceTimersByTimeAsync(120000);
+  expect(venue.place).not.toHaveBeenCalled();
+  expect(new FlowRunner(path).get(target.botId)?.status).toBe('failed');
+});
+
+it('finishes stop and preserves a sanitized audit warning across restart when journal writes fail',async()=>{
+  vi.useFakeTimers();
+  const {runner,venue,path}=setup();
+  await runner.start(target.botId,1,doc,target,'testnet',venue);
+  vi.spyOn(FlowAuditStore.prototype,'append').mockImplementation(()=>{throw new Error('private disk path');});
+  await runner.stop(target.botId);
+  await vi.advanceTimersByTimeAsync(120000);
+  expect(venue.place).not.toHaveBeenCalled();
+  const view=new FlowRunner(path).get(target.botId);
+  expect(view).toMatchObject({status:'stopped',auditWarning:expect.any(String)});
+  expect(JSON.stringify(view)).not.toContain('private disk path');
+});
+
+it('waits for an in-flight fill when stopping even if lifecycle writes fail',async()=>{
+  vi.useFakeTimers();
+  const {runner,venue}=setup();
+  let complete!: (fill: import('@catbots/strategy-runtime').Fill)=>void;
+  let submitted!: OrderPlan;
+  venue.place=vi.fn(async (plan:OrderPlan)=>{submitted=plan;return new Promise<import('@catbots/strategy-runtime').Fill>(resolve=>{complete=resolve;});});
+  await runner.start(target.botId,1,doc,target,'testnet',venue);
+  await vi.advanceTimersByTimeAsync(1000);
+  const append=FlowAuditStore.prototype.append;
+  vi.spyOn(FlowAuditStore.prototype,'append').mockImplementation(function(this:FlowAuditStore,event){
+    if(event.kind==='lifecycle')throw new Error('disk failure');
+    return append.call(this,event);
+  });
+  const stopped=runner.stop(target.botId);
+  expect(runner.get(target.botId)?.status).toBe('stopping');
+  complete({id:'confirmed',clientOrderId:submitted.clientOrderId,side:'buy',quantity:0.2,price:100,fee:0.01});
+  await stopped;
+  expect(runner.get(target.botId)).toMatchObject({status:'stopped',position:0.2,orders:[{status:'filled'}],auditWarning:expect.any(String)});
+  await vi.advanceTimersByTimeAsync(120000);
+  expect(venue.place).toHaveBeenCalledTimes(1);
+});
+
+it('recovers interrupted state despite unavailable audit storage',async()=>{
+  vi.useFakeTimers();
+  const {runner,venue,path}=setup();
+  await runner.start(target.botId,1,doc,target,'testnet',venue);
+  vi.clearAllTimers();
+  vi.spyOn(FlowAuditStore.prototype,'append').mockImplementation(()=>{throw new Error('disk failure');});
+  const restored=new FlowRunner(path);
+  expect(restored.get(target.botId)).toMatchObject({status:'interrupted',auditWarning:expect.any(String)});
+  expect(venue.place).not.toHaveBeenCalled();
+});
+
 it("enforces notional, collateral, position, reduce-only and existing-order constraints", () => {
   expect(guardOrder(order, snapshot, target).quantity).toBe(0.2);
   expect(() => guardOrder({ ...order, quantity: 1 }, snapshot, target)).toThrow(
@@ -173,14 +243,18 @@ it("retains skipped no-trade evaluations rather than only evaluations with order
   await vi.advanceTimersByTimeAsync(61000);
   await runner.stop(target.botId);
   expect(venue.place).not.toHaveBeenCalled();
-  const rows = runner.auditHistory(target.botId);
+  const rows = runner.auditHistory(target.botId).filter(row=>row.kind==='evaluation');
   expect(rows).toHaveLength(2);
   expect(rows[0].details).toMatchObject({ orders: [], trace: expect.arrayContaining([expect.objectContaining({ nodeId: 'buy', status: 'skipped' })]) });
 });
 it("does not submit when the audit store cannot persist an evaluation", async () => {
   vi.useFakeTimers();
-  const { runner, venue, path } = setup();
-  mkdirSync(`${path}.audit.sqlite`);
+  const { runner, venue } = setup();
+  const append=FlowAuditStore.prototype.append;
+  vi.spyOn(FlowAuditStore.prototype,'append').mockImplementation(function(this:FlowAuditStore,event){
+    if(event.kind==='evaluation') throw new Error('AUDIT_UNAVAILABLE');
+    return append.call(this,event);
+  });
   await runner.start(target.botId, 3, doc, target, 'testnet', venue);
   await vi.advanceTimersByTimeAsync(2000);
   expect(venue.place).not.toHaveBeenCalled();
@@ -220,7 +294,7 @@ it("halts on ambiguous submission and never retries or permits a blind restart",
   await runner.start(target.botId, 1, doc, target, "testnet", venue);
   await vi.advanceTimersByTimeAsync(2000);
   expect(runner.get(target.botId)?.status).toBe("failed");
-  expect(runner.auditHistory(target.botId).map(row => row.kind)).toEqual(['evaluation', 'order_intent', 'failure']);
+  expect(runner.auditHistory(target.botId).map(row => row.kind)).toEqual(['lifecycle', 'evaluation', 'order_intent', 'failure']);
   expect(runner.auditHistory(target.botId).at(-1)?.details).toMatchObject({ status: 'failed', pending: expect.any(String) });
   await vi.advanceTimersByTimeAsync(120000);
   expect(venue.place).toHaveBeenCalledTimes(1);
@@ -473,11 +547,15 @@ it("checks a daily DCA stop loss intraday without creating new entry signals", a
   expect(venue.place).toHaveBeenCalledTimes(2);
   await runner.dispose();
 });
-it("reconciles an uncertain fill without resubmitting it", async () => {
+it.each([false,true])("reconciles an uncertain fill without resubmitting it despite audit failure (%s)", async (auditFails) => {
   vi.useFakeTimers();
   const { runner, venue } = setup(true);
   await runner.start(target.botId, 1, doc, target, "testnet", venue);
   await vi.advanceTimersByTimeAsync(2000);
+  venue.reconcile=vi.fn(async()=>undefined);
+  await expect(runner.reconcile(target.botId,venue)).rejects.toThrow('terminal outcome');
+  expect(runner.auditHistory(target.botId).filter(row=>row.kind==='reconciliation').map(row=>(row.details as {event:string}).event)).toEqual(['requested','failed']);
+  if(auditFails) vi.spyOn(FlowAuditStore.prototype,'append').mockImplementation(()=>{throw new Error('private disk path');});
   venue.reconcile = vi.fn(async (plan) => ({
     id: "exchange-1",
     clientOrderId: plan.clientOrderId,
@@ -493,6 +571,8 @@ it("reconciles an uncertain fill without resubmitting it", async () => {
     orders: [{ status: "filled", exchangeOrderId: "exchange-1" }],
   });
   expect(venue.place).toHaveBeenCalledTimes(1);
+  if(auditFails) expect(runner.get(target.botId)?.auditWarning).toBeTruthy();
+  else expect(runner.auditHistory(target.botId).filter(row=>row.kind==='reconciliation').at(-1)?.details).toMatchObject({event:'completed',pending:expect.any(String),order:{status:'filled',exchangeOrderId:'exchange-1'}});
   await runner.reconcile(target.botId, venue);
   expect(venue.reconcile).toHaveBeenCalledTimes(1);
 });
@@ -553,11 +633,11 @@ it("blocks static DCA sizing that exceeds the saved target before any snapshot o
   ).rejects.toThrow("exceeds target");
   expect(venue.snapshot).not.toHaveBeenCalled();
 });
-it.each([false, true])("installs native protection after a DCA fill even when outcome audit fails (%s)", async (auditFails) => {
+it.each([false, 'order_outcome', 'protection'] as const)("installs native protection after a DCA fill even when audit fails (%s)", async (auditFails) => {
   if (auditFails) {
     const append = FlowAuditStore.prototype.append;
     vi.spyOn(FlowAuditStore.prototype, 'append').mockImplementation(function(this: FlowAuditStore, event) {
-      if (event.kind === 'order_outcome') throw new Error('AUDIT_DISK_FAILURE');
+      if (event.kind === auditFails) throw new Error('AUDIT_DISK_FAILURE');
       return append.call(this, event);
     });
   }
@@ -665,7 +745,10 @@ it.each([false, true])("installs native protection after a DCA fill even when ou
   await vi.advanceTimersByTimeAsync(2000);
   expect(runner.get(target.botId)?.protection?.status).toBe("protected");
   expect(venue.protection.submitProtection).toHaveBeenCalledTimes(2);
-  if (auditFails) {
+  const protectionCount=runner.auditHistory(target.botId).filter(row=>row.kind==='protection').length;
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(runner.auditHistory(target.botId).filter(row=>row.kind==='protection')).toHaveLength(protectionCount);
+  if (auditFails === 'order_outcome') {
     expect(runner.get(target.botId)).toMatchObject({ status: 'failed', error: 'AUDIT_DISK_FAILURE', position: 0.2, protection: { status: 'protected' } });
     await vi.advanceTimersByTimeAsync(120000);
     expect(venue.place).toHaveBeenCalledTimes(1);
@@ -682,6 +765,15 @@ it.each([false, true])("installs native protection after a DCA fill even when ou
   });
   expect(venue.place).toHaveBeenCalledTimes(1);
   expect(venue.protection.cancelProtection).toHaveBeenCalledTimes(1);
+  if(auditFails==='protection') expect(runner.get(target.botId)?.auditWarning).toBeTruthy();
+  else {
+    const events=runner.auditHistory(target.botId).filter(row=>row.kind==='protection');
+    expect(events.some(row=>(row.details as any).protection?.status==='protected')).toBe(true);
+    expect(events.at(-1)?.details).toMatchObject({protection:{status:'flat'},position:0});
+    expect(JSON.stringify(events)).toContain('planned');
+    expect(JSON.stringify(events)).toContain('unknown');
+    expect(JSON.stringify(events)).toContain('stop-fill');
+  }
   expect(runner.get(target.botId)?.orders.at(-1)?.exchangeOrderId).toBe(
     "stop-fill",
   );

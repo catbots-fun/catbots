@@ -184,6 +184,7 @@ export class FlowRunner {
     if (existsSync(`${path}.history`))
       this.archives = JSON.parse(readFileSync(`${path}.history`, "utf8"));
     if (existsSync(path)) this.records = JSON.parse(readFileSync(path, "utf8"));
+    const interrupted: Stored[] = [];
     for (const item of Object.values(this.records))
       if (item.view.status === "running" || item.view.status === "stopping") {
         item.cancelled = [
@@ -198,8 +199,10 @@ export class FlowRunner {
         item.view.status = "interrupted";
         item.view.error =
           "Backend restarted. Review account orders and positions before starting again.";
+        interrupted.push(item);
       }
     this.persist();
+    for (const item of interrupted) this.safetyAudit(item, 'lifecycle', { event: 'interrupted', status: item.view.status, pending: item.pending });
   }
   private persist() {
     mkdirSync(dirname(this.path), { recursive: true });
@@ -218,6 +221,15 @@ export class FlowRunner {
   }
   private auditEvent(record: Stored, kind: FlowAuditEvent['kind'], details: unknown) {
     this.audit.append({ botId: record.view.botId, deploymentId: record.view.id, version: record.view.version, kind, details });
+  }
+  /** Logging must never interrupt a stop, recovery or mandatory protection action. */
+  private safetyAudit(record: Stored, kind: FlowAuditEvent['kind'], details: unknown) {
+    try { this.auditEvent(record, kind, details); }
+    catch {
+      record.view.auditWarning = 'Some audit events could not be saved. History may be incomplete; review exchange orders and positions.';
+      // Best effort only: an unavailable disk must not replace the financial error.
+      try { this.persist(); } catch { /* The warning remains visible in memory. */ }
+    }
   }
   get(botId: string) {
     return this.records[botId]
@@ -334,6 +346,14 @@ export class FlowRunner {
     }
     await this.syncProtection(this.records[botId], venue, initial);
     this.persist();
+    try {
+      this.auditEvent(this.records[botId], 'lifecycle', { event: same ? 'resumed' : 'started', status: 'running', environment, market: target.market });
+    } catch {
+      this.records[botId].view.status = 'failed';
+      this.records[botId].view.error = 'Cannot start: audit journal unavailable.';
+      this.persist();
+      throw new Error('Cannot start: audit journal unavailable.');
+    }
     this.active.set(botId, {
       venue,
       stop: false,
@@ -546,7 +566,31 @@ export class FlowRunner {
     );
     return snapshot.openOrderIds.filter((id) => !owned.has(id)).length;
   }
+  private protectionEvidence(record: Stored) {
+    return { protection: record.view.protection, state: record.protection, position: record.view.position,
+      status: record.view.status, latestOrder: record.view.orders.at(-1) };
+  }
   private async syncProtection(
+    record: Stored,
+    venue: FlowVenue,
+    snapshot: VenueSnapshot,
+  ): Promise<boolean> {
+    const before = JSON.stringify(this.protectionEvidence(record));
+    try {
+      const result = await this.syncProtectionState(record, venue, snapshot);
+      if (before !== JSON.stringify(this.protectionEvidence(record))) this.safetyAudit(record, 'protection', {
+        event: 'synchronized', ...this.protectionEvidence(record),
+      });
+      return result;
+    } catch (error) {
+      if (venue.protection && record.document.nodes.some(node => node.type === 'strategy.dca')) this.safetyAudit(record, 'protection', {
+        event: 'failed', protection: record.view.protection, state: record.protection,
+        position: record.view.position, error: error instanceof Error ? error.message : 'Protection failed',
+      });
+      throw error;
+    }
+  }
+  private async syncProtectionState(
     record: Stored,
     venue: FlowVenue,
     snapshot: VenueSnapshot,
@@ -555,6 +599,7 @@ export class FlowRunner {
       (node) => node.type === "strategy.dca",
     );
     if (!node || !venue.protection) return true;
+    let previous = JSON.stringify(this.protectionEvidence(record));
     const persist = () => {
       record.view.protection = {
         mode: "exchange",
@@ -574,6 +619,11 @@ export class FlowRunner {
         })),
       };
       this.persist();
+      const next = JSON.stringify(this.protectionEvidence(record));
+      if (next !== previous) {
+        this.safetyAudit(record, 'protection', { event: 'transition', ...this.protectionEvidence(record) });
+        previous = next;
+      }
     };
     let executed = record.nativeExitPending ?? false;
     if (record.protection) {
@@ -743,10 +793,14 @@ export class FlowRunner {
     if (this.reconciling.has(botId))
       throw new Error("Reconciliation already in progress");
     this.reconciling.add(botId);
+    const record = this.records[botId];
+    let accepted = false;
+    const pending = record?.pending;
     try {
       if (this.active.has(botId))
         throw new Error("Stop the bot before reconciling");
-      const record = this.records[botId];
+      accepted = !!record;
+      if (record) this.safetyAudit(record, 'reconciliation', { event: 'requested', pending });
       if (record?.protection && venue.protection)
         await this.syncProtection(record, venue, await venue.snapshot([]));
       if (!record?.pending) {
@@ -758,6 +812,7 @@ export class FlowRunner {
           delete record.view.error;
           this.persist();
         }
+        if (record) this.safetyAudit(record, 'reconciliation', { event: 'completed', status: record.view.status, pending, outcome: 'no_pending_order' });
         return this.get(botId);
       }
       if (!record.pendingOrder || !venue.reconcile)
@@ -794,7 +849,11 @@ export class FlowRunner {
       record.view.status = "stopped";
       delete record.view.error;
       this.persist();
+      this.safetyAudit(record, 'reconciliation', { event: 'completed', pending, status: record.view.status, order: record.view.orders.at(-1), position: record.view.position });
       return this.get(botId);
+    } catch (error) {
+      if (accepted && record) this.safetyAudit(record, 'reconciliation', { event: 'failed', pending: record.pending, status: record.view.status, error: error instanceof Error ? error.message : 'Reconciliation failed' });
+      throw error;
     } finally {
       this.reconciling.delete(botId);
     }
@@ -806,6 +865,7 @@ export class FlowRunner {
       clearTimeout(active.timer);
       this.records[botId].view.status = "stopping";
       this.persist();
+      this.safetyAudit(this.records[botId], 'lifecycle', { event: 'stop_requested', status: 'stopping', pending: this.records[botId].pending });
       await active.task;
       const record = this.records[botId];
       record.cancelled = [
@@ -821,6 +881,7 @@ export class FlowRunner {
       if (this.get(botId)?.status !== "failed")
         this.records[botId].view.status = "stopped";
       this.persist();
+      this.safetyAudit(record, 'lifecycle', { event: 'stopped', status: record.view.status, pending: record.pending, position: record.view.position });
     }
     return this.get(botId);
   }

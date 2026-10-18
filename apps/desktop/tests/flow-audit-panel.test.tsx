@@ -5,6 +5,15 @@ import type { CatbotsDesktopApi, ConnectionsView, FlowAuditRecord } from '@catbo
 import { FlowExecutionResults } from '../src/renderer/workbench/FlowExecutionResults';
 
 afterEach(cleanup);
+it('shows a sticky audit gap warning without replacing the financial error', async()=>{
+  const connectionApi:NonNullable<CatbotsDesktopApi['connections']>={command:async input=>input.action==='get_flow_audit'?{...empty,auditPage:{records:[{...record(1),kind:'lifecycle'}]}}:{...empty,deployment:{
+    id:'run',botId:'bot-a',version:1,environment:'testnet',target:{botId:'bot-a',connectionId:'connection',accountId:'account',market:'SOL-PERP',maxPositionUsd:100,maxOrderUsd:50},status:'failed',startedAt:'2026-10-19T00:00:00Z',cycles:1,orders:[],events:[],error:'Uncertain order',auditWarning:'Some audit events could not be saved.',
+  }}};
+  render(<FlowExecutionResults botId="bot-a" logs api={connectionApi}/>);
+  await screen.findByText('Audit history may be incomplete');
+  expect(screen.getByText('Uncertain order')).toBeTruthy();
+  expect(screen.getByText('Lifecycle')).toBeTruthy();
+});
 const empty = { adapters: [], connections: [] };
 const record = (sequence: number, botId='bot-a'): FlowAuditRecord => ({
   sequence, botId, deploymentId:`run-${sequence}`, version:sequence,

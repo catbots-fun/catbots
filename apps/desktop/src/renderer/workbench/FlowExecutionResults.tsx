@@ -133,6 +133,7 @@ export function FlowExecutionResults({
             {!metrics && <Banner variant="alert" title="Incomplete fill data" description="PnL and fees cannot be calculated for this run."/>}
           </>}
           {run.error && <Banner variant="error" title="Execution needs attention" description={run.error}/>}
+          {run.auditWarning && <Banner variant="alert" title="Audit history may be incomplete" description={run.auditWarning}/>}
           {logs ? <ExecutionLogPanel key={run.id} run={run}/> : <LayerCard className="deploy-card">
           <div className="deploy-runtime-heading"><h3>Order history</h3><Badge variant="neutral">{run.orders.length} {run.orders.length===1 ? "order" : "orders"}</Badge></div>
           <p className="backtest-muted">Newest first · Times in {Intl.DateTimeFormat().resolvedOptions().timeZone}</p>
