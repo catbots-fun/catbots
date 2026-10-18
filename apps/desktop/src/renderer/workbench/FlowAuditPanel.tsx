@@ -1,6 +1,7 @@
 import { useEffect, useId, useState } from 'react';
 import { Badge, Banner, Button, CodeBlock, LayerCard } from '@cloudflare/kumo';
 import type { CatbotsDesktopApi, FlowAuditPage, FlowAuditRecord } from '@catbots/contracts';
+import { AuditExportControls } from './AuditExportControls';
 
 const labels: Record<FlowAuditRecord['kind'], string> = {
   evaluation: 'Evaluation', order_intent: 'Order intent', order_outcome: 'Order outcome', failure: 'Failure',
@@ -65,6 +66,7 @@ function AuditHistory({ botId, api }: { botId: string; api?: CatbotsDesktopApi['
     </div>
     <p className="backtest-muted">Oldest first · Includes evaluations that produced no orders. Times in {Intl.DateTimeFormat().resolvedOptions().timeZone}.</p>
     <p className="backtest-muted">Only events recorded since audit logging was enabled are available. Missing records do not prove that no trade occurred.</p>
+    <AuditExportControls botId={botId} api={api}/>
     {loading && <p role="status">Loading audit history…</p>}
     {failed && <>
       <Banner variant="error" title="Audit history unavailable" description="Could not read the local journal. Retry or check that your app supports audit history."/>

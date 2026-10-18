@@ -216,8 +216,9 @@ export class FlowRunner {
       .filter((item) => item.view.botId === botId)
       .map((item) => structuredClone(item.view));
   }
-  auditHistory(botId: string, after = 0, limit = 50) {
-    return this.audit.list(botId, after, limit);
+  auditSummary(botId: string) { return this.audit.summary(botId); }
+  auditHistory(botId: string, after = 0, limit = 50, through?: number) {
+    return this.audit.list(botId, after, limit, through);
   }
   private auditEvent(record: Stored, kind: FlowAuditEvent['kind'], details: unknown) {
     this.audit.append({ botId: record.view.botId, deploymentId: record.view.id, version: record.view.version, kind, details });

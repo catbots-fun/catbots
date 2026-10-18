@@ -290,6 +290,7 @@ describe('validated IPC handlers', () => {
     const handlers = createIpcHandlers(dependencies);
     await expect(handlers.connectionCommand(localEvent, { action: 'get_flow_audit', botId })).resolves.toEqual(view);
     expect(command).toHaveBeenCalledExactlyOnceWith({ action: 'get_flow_audit', botId, after: 0, limit: 20 });
+    await expect(handlers.connectionCommand(localEvent, { action: 'get_flow_audit_summary', botId })).resolves.toEqual(view);
     await expect(handlers.connectionCommand(fakeRemoteEvent, { action: 'get_flow_audit', botId })).rejects.toThrow('IPC_SENDER_NOT_ALLOWED');
   });
   it('reports Strategy Lab capabilities and rejects every execution start before service access', async () => {

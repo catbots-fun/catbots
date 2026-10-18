@@ -234,8 +234,9 @@ export class ConnectionsService {
   }
   async command(raw: unknown): Promise<ConnectionsView> {
     const input = ConnectionCommandSchema.parse(raw);
+    if (input.action === 'get_flow_audit_summary') return { ...this.view(), auditSummary: this.runner.auditSummary(input.botId) };
     if (input.action === "get_flow_audit") {
-      const records = this.runner.auditHistory(input.botId, input.after, input.limit + 1);
+      const records = this.runner.auditHistory(input.botId, input.after, input.limit + 1, input.through);
       const more = records.length > input.limit;
       if (more) records.pop();
       return {
