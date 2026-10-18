@@ -102,7 +102,7 @@ export function FlowExecutionResults({
         />
       )}
       {!run ? (
-        <p role="status">{loading ? "Loading trading history…" : error ? "History could not be loaded. Retrying…" : "No exchange run yet. Start a workflow from Deploy."}</p>
+        <p role="status">{loading ? "Loading trading history…" : error ? "History could not be loaded. Retrying…" : logs ? "No runtime snapshot available. Audit history is shown separately above." : "No runtime snapshot available."}</p>
       ) : (
         <>
           <Select

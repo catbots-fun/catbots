@@ -100,6 +100,24 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe('BotWorkbenchScreen', () => {
+  it('opens durable flow audit history with execution disabled and no runtime snapshot', async () => {
+    const workbench = api();
+    workbench.get = vi.fn().mockResolvedValue({ ...state, flowDraft: {
+      botId: state.bot.id, version: 1, status: 'valid', updatedAt: state.bot.createdAt,
+      document: { schemaVersion: '3.0', nodes: [], edges: [] },
+    }});
+    const connectionsApi: NonNullable<CatbotsDesktopApi['connections']> = {
+      command: async input => ({ adapters: [], connections: [], ...(input.action === 'get_flow_audit' ? {
+        auditPage: { records: [{ botId: state.bot.id, deploymentId: 'historical-run', version: 1, kind: 'evaluation',
+          sequence: 1, at: state.bot.createdAt, details: { orders: [] } }] },
+      } : {}) }),
+    };
+    render(<BotWorkbenchScreen bot={state.bot} api={workbench} deploymentApi={deploymentApi()} connectionsApi={connectionsApi} capabilities={strategyLabCapabilities} onBack={vi.fn()}/>);
+    fireEvent.click(await screen.findByRole('tab', { name: 'Logs' }));
+    await screen.findByRole('button', { name: /Event #1/ });
+    expect(screen.queryByRole('tab', { name: 'Deploy' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Run Paper' })).toBeNull();
+  });
   it('keeps Chat, Flow, and Backtest while removing execution panels in Strategy Lab Beta', async () => {
     const executionApi = deploymentApi();
     render(<BotWorkbenchScreen bot={state.bot} api={api()} deploymentApi={executionApi} capabilities={strategyLabCapabilities} onBack={vi.fn()} />);

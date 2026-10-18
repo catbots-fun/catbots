@@ -20,6 +20,8 @@ it('browses stored evaluations even without runtime snapshots and navigates curs
     ...empty,auditPage:input.after===0?{records:[record(1)],nextAfter:1}:{records:[record(3)]},
   }))}/>);
   await screen.findByRole('button',{name:/Event #1/});
+  expect(screen.queryByText(/No exchange run yet/)).toBeNull();
+  expect(screen.getByText('No runtime snapshot available. Audit history is shown separately above.')).toBeTruthy();
   fireEvent.click(screen.getByRole('button',{name:/Event #1/}));
   await screen.findByText(/condition-1/);
   fireEvent.click(screen.getByRole('button',{name:'Next page'}));
