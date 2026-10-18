@@ -486,14 +486,18 @@ export class FlowRunner {
           (id) => id !== proposal.clientOrderId,
         );
         this.persist();
-        this.auditEvent(record, 'order_outcome', { runId: context.runId, cloid, ...record.view.orders[record.view.orders.length - 1] });
+        const outcome = { runId: context.runId, cloid, ...record.view.orders[record.view.orders.length - 1] };
+        let protectedPosition = true;
         if (active.venue.protection) {
           const after = await active.venue.snapshot([]);
-          if (!(await this.syncProtection(record, active.venue, after))) {
-            active.stop = true;
-            this.active.delete(botId);
-            return;
-          }
+          protectedPosition = await this.syncProtection(record, active.venue, after);
+        }
+        // Confirmed inventory must receive native protection even if audit storage fails.
+        this.auditEvent(record, 'order_outcome', outcome);
+        if (!protectedPosition) {
+          active.stop = true;
+          this.active.delete(botId);
+          return;
         }
       }
     } catch (error) {

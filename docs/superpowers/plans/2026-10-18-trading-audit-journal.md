@@ -31,11 +31,11 @@
 
 **Interfaces:** `FlowAuditStore.append(event: FlowAuditEvent): void` and `list(botId: string, after = 0, limit = 50)` return ascending sequence-tagged events. Event kinds: evaluation, order_intent, order_outcome, failure. Runner exposes `auditHistory(botId, after?, limit?)` internally, not over IPC in this slice.
 
-- [ ] Add failing tests for durable immutable snapshots, bot-isolated pagination, input validation, nested redaction, and private file permissions.
-- [ ] Add runner tests for multiple evaluations/reopen, no-order evaluations, intent/outcome correlation and no submission when journal path is unwritable.
-- [ ] Run targeted Vitest tests and observe missing behavior fail.
-- [ ] Implement store and runner hooks. Append evaluation before state commit/dispatch; append guarded intent before pending state/submission; append outcome after recovery state persistence. On failure append a safe failure event best-effort without masking the original recovery state.
-- [ ] Run targeted tests, full `pnpm test`, `pnpm typecheck`, and `git diff --check`.
+- [x] Add failing tests for durable immutable snapshots, bot-isolated pagination, input validation, nested redaction, and private file permissions.
+- [x] Add runner tests for multiple evaluations/reopen, no-order evaluations, intent/outcome correlation and no submission when journal path is unwritable.
+- [x] Run targeted Vitest tests and observe missing behavior fail.
+- [x] Implement store and runner hooks. Append evaluation before state commit/dispatch; append guarded intent before pending state/submission; append outcome after recovery state persistence and mandatory native protection handling. On failure append a safe failure event best-effort without masking the original recovery state.
+- [x] Run targeted tests, full `pnpm test`, `pnpm typecheck`, and `git diff --check`.
 - [ ] Commit focused changes, perform fresh whole-branch review, fix important findings with RED/GREEN coverage, push feature branch and open PR referencing #14 and #22 without closing them.
 
 ## Delivery boundary

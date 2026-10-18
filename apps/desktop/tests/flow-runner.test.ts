@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { FlowRunner, guardOrder } from "../src/main/connections/flow-runner";
+import { FlowAuditStore } from '../src/main/connections/flow-audit';
 import type { FlowDocument, OrderPlan } from "@catbots/strategy-runtime";
 import type {
   FlowVenue,
@@ -10,6 +11,7 @@ import type {
 } from "../src/main/connections/flow-venue";
 const paths: string[] = [];
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.useRealTimers();
   paths
     .splice(0)
@@ -184,6 +186,34 @@ it("does not submit when the audit store cannot persist an evaluation", async ()
   expect(venue.place).not.toHaveBeenCalled();
   expect(runner.get(target.botId)?.status).toBe('failed');
 });
+it("does not submit when only the guarded intent write fails", async () => {
+  vi.useFakeTimers();
+  const append = FlowAuditStore.prototype.append;
+  vi.spyOn(FlowAuditStore.prototype, 'append').mockImplementation(function(this: FlowAuditStore, event) {
+    if (event.kind === 'order_intent') throw new Error('INTENT_AUDIT_UNAVAILABLE');
+    return append.call(this, event);
+  });
+  const { runner, venue, path } = setup();
+  await runner.start(target.botId, 3, doc, target, 'testnet', venue);
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(venue.place).not.toHaveBeenCalled();
+  expect(new FlowRunner(path).get(target.botId)).toMatchObject({ status: 'failed', orders: [] });
+});
+it("preserves uncertain recovery state when failure-event persistence also fails", async () => {
+  vi.useFakeTimers();
+  const append = FlowAuditStore.prototype.append;
+  vi.spyOn(FlowAuditStore.prototype, 'append').mockImplementation(function(this: FlowAuditStore, event) {
+    if (event.kind === 'failure') throw new Error('FAILURE_AUDIT_UNAVAILABLE');
+    return append.call(this, event);
+  });
+  const { runner, venue, path } = setup(true);
+  await runner.start(target.botId, 3, doc, target, 'testnet', venue);
+  await vi.advanceTimersByTimeAsync(2000);
+  const restored = new FlowRunner(path);
+  expect(restored.get(target.botId)).toMatchObject({ status: 'failed', error: 'uncertain', orders: [{ status: 'uncertain' }] });
+  await expect(restored.start(target.botId, 3, doc, target, 'testnet', venue)).rejects.toThrow('unresolved');
+  expect(venue.place).toHaveBeenCalledTimes(1);
+});
 it("halts on ambiguous submission and never retries or permits a blind restart", async () => {
   vi.useFakeTimers();
   const { runner, venue } = setup(true);
@@ -343,6 +373,7 @@ it("resumes the original deployment without losing fills or reentering the same 
 });
 it("rejects a new revision with an existing position and retains archived runs once flat", async () => {
   vi.useFakeTimers();
+  vi.setSystemTime(new Date('2026-10-18T00:00:10Z'));
   const { runner, venue } = setup();
   await runner.start(target.botId, 1, doc, target, "testnet", venue);
   await vi.advanceTimersByTimeAsync(2000);
@@ -522,7 +553,14 @@ it("blocks static DCA sizing that exceeds the saved target before any snapshot o
   ).rejects.toThrow("exceeds target");
   expect(venue.snapshot).not.toHaveBeenCalled();
 });
-it("installs native protection after a DCA fill and stops after an exchange exit without duplicate sells", async () => {
+it.each([false, true])("installs native protection after a DCA fill even when outcome audit fails (%s)", async (auditFails) => {
+  if (auditFails) {
+    const append = FlowAuditStore.prototype.append;
+    vi.spyOn(FlowAuditStore.prototype, 'append').mockImplementation(function(this: FlowAuditStore, event) {
+      if (event.kind === 'order_outcome') throw new Error('AUDIT_DISK_FAILURE');
+      return append.call(this, event);
+    });
+  }
   vi.useFakeTimers();
   vi.setSystemTime(new Date("2026-09-06T00:00:10Z"));
   const { runner, venue } = setup();
@@ -627,6 +665,13 @@ it("installs native protection after a DCA fill and stops after an exchange exit
   await vi.advanceTimersByTimeAsync(2000);
   expect(runner.get(target.botId)?.protection?.status).toBe("protected");
   expect(venue.protection.submitProtection).toHaveBeenCalledTimes(2);
+  if (auditFails) {
+    expect(runner.get(target.botId)).toMatchObject({ status: 'failed', error: 'AUDIT_DISK_FAILURE', position: 0.2, protection: { status: 'protected' } });
+    await vi.advanceTimersByTimeAsync(120000);
+    expect(venue.place).toHaveBeenCalledTimes(1);
+    await runner.dispose();
+    return;
+  }
   nativeClosed = true;
   position = 0;
   await vi.advanceTimersByTimeAsync(6000);

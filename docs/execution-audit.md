@@ -8,7 +8,7 @@ The runtime records:
 
 - Signal and risk evaluations, including node trace and proposed orders even when no order is produced.
 - Guard-approved order intent with deterministic client-order correlation before dispatch.
-- Confirmed fill or cancellation after recovery state is saved.
+- Confirmed fill or cancellation after recovery state is saved and mandatory native protection handling has run. A logging failure must not bypass protection of confirmed inventory.
 - Runtime failure, best-effort when storage itself is unavailable.
 
 An evaluation/intent write failure stops execution before a new order is sent. An outcome write failure stops subsequent execution while retaining the existing recovery journal. Audit records never authorize retries. A crash between the separate recovery-state and audit transactions can leave an intent without an outcome: reconciliation remains authoritative, not an inference from missing audit evidence.
