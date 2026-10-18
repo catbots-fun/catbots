@@ -40,6 +40,56 @@ export async function verifyPackageContents(artifactDirectory) {
   if (findings.length > 0) throw new Error(`Forbidden packaged files: ${findings.join(', ')}`);
 }
 
+export async function verifyRequiredEntries(artifactDirectory, requiredEntries) {
+  const entries = await collectPackagedEntries(artifactDirectory, artifactDirectory);
+  for (const requirement of requiredEntries) {
+    const expected = normalizeEntry(requirement.path);
+    const found = entries.some((entry) => requirement.kind === 'exact'
+      ? entry === expected || entry.endsWith(`/${expected}`)
+      : entry.startsWith(expected) || entry.includes(`/${expected}`));
+    if (!found) {
+      const label = requirement.kind === 'exact'
+        ? 'Missing required packaged entry'
+        : 'Missing required packaged entry prefix';
+      throw new Error(`${label}: ${expected}`);
+    }
+  }
+}
+
+async function collectPackagedEntries(directory, displayRoot) {
+  const entries = [];
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const path = join(directory, entry.name);
+    const displayPath = normalizeEntry(relative(displayRoot, path));
+    if (entry.isDirectory()) {
+      entries.push(...await collectPackagedEntries(path, displayRoot));
+    } else if (entry.isFile() && entry.name.endsWith('.asar')) {
+      entries.push(displayPath);
+      entries.push(...listPackage(path, { isPack: false }).map(normalizeEntry));
+    } else if (entry.isFile() && entry.name.endsWith('.zip')) {
+      entries.push(displayPath);
+      entries.push(...await collectZipEntries(path));
+    } else if (entry.isFile()) {
+      entries.push(displayPath);
+    }
+  }
+  return entries;
+}
+
+async function collectZipEntries(zipPath) {
+  const inspectionDirectory = await mkdtemp(join(tmpdir(), 'catbots-package-required-'));
+  try {
+    await execute('unzip', ['-qq', '-o', zipPath, '-d', inspectionDirectory]);
+    return await collectPackagedEntries(inspectionDirectory, inspectionDirectory);
+  } finally {
+    await rm(inspectionDirectory, { force: true, recursive: true });
+  }
+}
+
+function normalizeEntry(path) {
+  return path.replaceAll('\\', '/').replace(/^\/+/, '');
+}
+
 async function inspectZip(zipPath, displayRoot) {
   const inspectionDirectory = await mkdtemp(join(tmpdir(), 'catbots-package-inspect-'));
   try {
@@ -55,4 +105,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const artifactDirectory = process.argv[2];
   if (artifactDirectory === undefined) throw new Error('Usage: verify-package-contents.mjs <artifact-directory>');
   await verifyPackageContents(artifactDirectory);
+  await verifyRequiredEntries(artifactDirectory, [
+    { kind: 'exact', path: '.vite/renderer/main_window/web.html' },
+  ]);
 }

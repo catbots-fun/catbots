@@ -7,6 +7,11 @@ export type DatabaseMigrator = (database: Database.Database) => void;
 export type DatabaseOpenResult =
   | Readonly<{ status: 'ready'; database: Database.Database }>
   | Readonly<{ status: 'repair'; code: 'DATABASE_MIGRATION_FAILED' }>;
+export type WalCheckpoint = Readonly<{
+  busyFrames: number;
+  logFrames: number;
+  checkpointedFrames: number;
+}>;
 
 export function openDatabase(path: string): Database.Database {
   const database = new Database(path);
@@ -45,5 +50,21 @@ export class ApplicationDatabase {
   close(): void {
     this.database?.close();
     this.database = undefined;
+  }
+
+  checkpointWal(): WalCheckpoint {
+    if (this.database === undefined) throw new Error('DATABASE_NOT_READY');
+    const rows = this.database.pragma('wal_checkpoint(TRUNCATE)') as Array<{
+      busy: number;
+      log: number;
+      checkpointed: number;
+    }>;
+    const row = rows[0];
+    if (row === undefined) throw new Error('DATABASE_CHECKPOINT_FAILED');
+    return {
+      busyFrames: row.busy,
+      logFrames: row.log,
+      checkpointedFrames: row.checkpointed,
+    };
   }
 }

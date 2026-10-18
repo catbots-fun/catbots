@@ -36,8 +36,15 @@ declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
 declare const MAIN_WINDOW_VITE_NAME: string;
 
 const appOrigin = 'catbots://app';
-const database = new ApplicationDatabase();
-const runtime = new RuntimeSupervisor(() => utilityProcess.fork(join(__dirname, 'runtime-worker.js')));
+const ownsApplicationInstance = app.requestSingleInstanceLock();
+let database!: ApplicationDatabase;
+let runtime!: RuntimeSupervisor;
+if (ownsApplicationInstance) {
+  database = new ApplicationDatabase();
+  runtime = new RuntimeSupervisor(() => utilityProcess.fork(join(__dirname, 'runtime-worker.js')));
+} else {
+  app.quit();
+}
 let disposeFlowConnections: (()=>Promise<void>) | undefined;
 let webServer: Awaited<ReturnType<typeof startWebServer>> | undefined;
 let disposeIpcHandlers: (() => void) | undefined;
@@ -53,7 +60,7 @@ let startupPhase = 'waiting-for-electron';
 
 app.enableSandbox();
 
-void app.whenReady()
+if (ownsApplicationInstance) void app.whenReady()
   .then(async () => {
     if (!app.isPackaged && process.platform === 'darwin') {
       try {
@@ -302,6 +309,9 @@ app.on('before-quit', (event) => {
 
 // Subscribing preserves the process after the final window closes. Tray controls own explicit exit.
 app.on('window-all-closed', () => undefined);
+app.on('second-instance', () => {
+  void openMainWindow();
+});
 
 function e2eMarketUniverseAdapter() {
   return {

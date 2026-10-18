@@ -127,6 +127,21 @@ describe('openDatabase', () => {
   });
 });
 
+describe('ApplicationDatabase maintenance', () => {
+  it('checkpoints the WAL to zero frames before maintenance', async () => {
+    const application = new ApplicationDatabase();
+    const directory = await createTemporaryDirectory();
+    expect(application.start(directory).status).toBe('ready');
+
+    expect(application.checkpointWal()).toEqual({
+      busyFrames: 0,
+      logFrames: 0,
+      checkpointedFrames: 0,
+    });
+    application.close();
+  });
+});
+
 describe('migrateDatabase', () => {
   it('opens a saved v3 Backtest and its legacy trace after migration without rewriting either artifact', async () => {
     const db = seedVersion3Database();

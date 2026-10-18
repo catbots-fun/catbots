@@ -25,6 +25,7 @@ const electron = vi.hoisted(() => {
 
       return app;
     }),
+    requestSingleInstanceLock: vi.fn(() => true),
     quit: vi.fn(),
     whenReady: vi.fn(() => new Promise<void>(() => undefined)),
   };
@@ -50,6 +51,8 @@ const electron = vi.hoisted(() => {
       app.getAppPath.mockClear();
       app.on.mockClear();
       app.once.mockClear();
+      app.requestSingleInstanceLock.mockReset();
+      app.requestSingleInstanceLock.mockReturnValue(true);
       app.quit.mockClear();
       app.whenReady.mockClear();
       handle.mockClear();
@@ -263,6 +266,23 @@ describe('main window lifecycle', () => {
     hyperliquidAdapter.getMarkets.mockClear();
     universeCache.reset();
     vi.unstubAllEnvs();
+  });
+
+  it('exits a losing process before constructing the application database', async () => {
+    electron.app.requestSingleInstanceLock.mockReturnValueOnce(false);
+
+    await import('../src/main/main');
+
+    expect(electron.app.requestSingleInstanceLock).toHaveBeenCalledOnce();
+    expect(applicationDatabase.ApplicationDatabase).not.toHaveBeenCalled();
+    expect(electron.app.quit).toHaveBeenCalledOnce();
+  });
+
+  it('acquires ownership before constructing the application database', async () => {
+    await import('../src/main/main');
+
+    expect(electron.app.requestSingleInstanceLock.mock.invocationCallOrder[0])
+      .toBeLessThan(applicationDatabase.ApplicationDatabase.mock.invocationCallOrder[0]);
   });
 
   it('keeps the application process alive when the last window closes', async () => {
