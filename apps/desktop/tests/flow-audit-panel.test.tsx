@@ -36,9 +36,11 @@ it('exports a complete bounded snapshot with manifest and shows retention/storag
 
 it.each(['missing','foreign','duplicate','beyond_snapshot','count_limit','byte_limit','unsupported'] as const)('never downloads an incomplete or invalid export (%s)',async mode=>{
   const download=captureDownload();
+  let boundedReads=0;
   const connectionApi:NonNullable<CatbotsDesktopApi['connections']>={command:async input=>{
-    if(input.action==='get_flow_audit_summary')return mode==='unsupported'?empty:{...empty,auditSummary:{count:mode==='count_limit'?50001:mode==='byte_limit'?30:2,through:30,databaseBytes:4096,retention:'keep_all'}};
+    if(input.action==='get_flow_audit_summary')return mode==='unsupported'?empty:{...empty,auditSummary:{count:mode==='count_limit'?50001:mode==='byte_limit'?30:2,through:mode==='count_limit'?50001:30,databaseBytes:4096,retention:'keep_all'}};
     if(input.action==='get_flow_audit' && input.through!==undefined) {
+      boundedReads++;
       if(mode==='foreign')return {...empty,auditPage:{records:[record(1,'other-bot')]}};
       if(mode==='duplicate')return {...empty,auditPage:{records:[record(1),record(1)]}};
       if(mode==='beyond_snapshot')return {...empty,auditPage:{records:[record(1),record(31)]}};
@@ -51,6 +53,7 @@ it.each(['missing','foreign','duplicate','beyond_snapshot','count_limit','byte_l
   fireEvent.click(await screen.findByRole('button',{name:'Export JSONL'}));
   await screen.findByText('Export unavailable');
   expect(download).not.toHaveBeenCalled();
+  if(mode==='count_limit')expect(boundedReads).toBe(0);
 });
 
 it.each(['cancel','switch_bot'] as const)('cancels a pending export and ignores its late response (%s)',async mode=>{
