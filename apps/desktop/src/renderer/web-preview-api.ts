@@ -29,6 +29,7 @@ import {
   type TraceDetail,
   type WorkbenchState,
 } from '@catbots/contracts';
+import { strategyLabCapabilities } from '../shared/product-capabilities';
 import type { AuditEvent, JsonValue, StrategyDocument } from '@catbots/strategy-runtime';
 import { replayBacktest } from '@catbots/strategy-runtime/backtest-replay';
 import {
@@ -76,6 +77,7 @@ export function createWebPreviewApi(): CatbotsDesktopApi {
   return {
     app: {
       getVersion: async () => 'web-preview',
+      getCapabilities: async () => strategyLabCapabilities,
       showMainWindow: async () => undefined,
       quitApplication: async () => undefined,
     },

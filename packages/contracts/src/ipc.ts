@@ -50,12 +50,23 @@ export type ConnectionTestResult =
   | { ok: true; model: string }
   | { ok: false; code: string; message: string };
 
+export const ProductCapabilitiesSchema = z.object({
+  release: z.enum(['strategy-lab-beta', 'testnet-alpha']),
+  strategyResearch: z.boolean(),
+  paperExecution: z.boolean(),
+  liveExecution: z.boolean(),
+  exchangeConnections: z.boolean(),
+}).strict();
+
+export type ProductCapabilities = z.infer<typeof ProductCapabilitiesSchema>;
+
 export interface CatbotsDesktopApi {
   connections?: { command(input: import('./connections').ConnectionCommand): Promise<import('./connections').ConnectionsView> };
   nodes?: { command(input: import('./node-packages').NodePackageCommand): Promise<import('./node-packages').NodePackageStatus> };
   providers?: { command(input: import('./providers').ProviderCommand): Promise<import('./providers').ProviderStatus> };
   app: {
     getVersion(): Promise<string>;
+    getCapabilities(): Promise<ProductCapabilities>;
     showMainWindow(): Promise<void>;
     quitApplication(): Promise<void>;
   };

@@ -13,6 +13,7 @@ import {
   type Deployment,
   type LivePreflightView,
   type PaperDeploymentView,
+  type ProductCapabilities,
   type RiskLimits,
   type RuntimeStatus,
 } from '@catbots/contracts';
@@ -20,7 +21,7 @@ import { buildWindowOptions } from '../src/main/create-window';
 import { denyUnexpectedNavigation } from '../src/main/create-window';
 import { ConfigRepository } from '../src/main/config/config-repository';
 import { assertTrustedAppSenderUrl } from '../src/main/ipc-security';
-import { createIpcHandlers, registerIpcHandlers } from '../src/main/ipc/register-ipc';
+import { createIpcHandlers, registerIpcHandlers, type IpcHandlerDependencies } from '../src/main/ipc/register-ipc';
 import { getSafeRelativePath } from '../src/main/register-app-protocol';
 
 const electronBridge = vi.hoisted(() => ({
@@ -219,7 +220,16 @@ const workbenchState = WorkbenchStateSchema.parse({
 });
 
 function createDependencies() {
+  const capabilities: ProductCapabilities = {
+    release: 'testnet-alpha',
+    strategyResearch: true,
+    paperExecution: true,
+    liveExecution: true,
+    exchangeConnections: true,
+  };
   return {
+    capabilities,
+    connections: undefined as IpcHandlerDependencies['connections'],
     app: {
       getVersion: vi.fn(() => '0.1.0'),
       showMainWindow: vi.fn(),
@@ -271,6 +281,45 @@ function createDependencies() {
 }
 
 describe('validated IPC handlers', () => {
+  it('reports Strategy Lab capabilities and rejects every execution start before service access', async () => {
+    const dependencies = createDependencies();
+    const connectionCommand = vi.fn().mockResolvedValue({ adapters: [], connections: [] });
+    dependencies.connections = { command: connectionCommand } as never;
+    dependencies.capabilities = {
+      release: 'strategy-lab-beta',
+      strategyResearch: true,
+      paperExecution: false,
+      liveExecution: false,
+      exchangeConnections: false,
+    };
+    const handlers = createIpcHandlers(dependencies);
+    const prepare = { botId, strategyVersion: 1, riskLimits, network: 'testnet' as const };
+    const start = { ...prepare, preflightId: livePreflight.id, confirmationBotName: 'BTC Live' };
+
+    await expect(handlers.getProductCapabilities(localEvent)).resolves.toEqual(dependencies.capabilities);
+    await expect(handlers.startPaperDeployment(localEvent, { botId, strategyVersion: 1, riskLimits }))
+      .rejects.toMatchObject({ code: 'EXECUTION_NOT_AVAILABLE' });
+    await expect(handlers.prepareLiveDeployment(localEvent, prepare))
+      .rejects.toMatchObject({ code: 'EXECUTION_NOT_AVAILABLE' });
+    await expect(handlers.startLiveDeployment(localEvent, start))
+      .rejects.toMatchObject({ code: 'EXECUTION_NOT_AVAILABLE' });
+    await expect(handlers.connectionCommand(localEvent, {
+      action: 'connect', adapterId: 'hyperliquid', name: 'Testnet', environment: 'testnet', owner: `0x${'1'.repeat(40)}`,
+    })).rejects.toMatchObject({ code: 'EXECUTION_NOT_AVAILABLE' });
+    await expect(handlers.patchLocalSettings(localEvent, {
+      ...settingsPatch,
+      exchanges: { hyperliquid: { network: 'testnet', accountAddress: `0x${'1'.repeat(40)}`, agentPrivateKey: `0x${'2'.repeat(64)}` } },
+    })).rejects.toMatchObject({ code: 'EXECUTION_NOT_AVAILABLE' });
+    await expect(handlers.connectionCommand(localEvent, { action: 'list' })).resolves.toEqual({ adapters: [], connections: [] });
+
+    expect(dependencies.deploymentService.startPaper).not.toHaveBeenCalled();
+    expect(dependencies.deploymentService.prepareLive).not.toHaveBeenCalled();
+    expect(dependencies.deploymentService.startLive).not.toHaveBeenCalled();
+    expect(dependencies.runtime.startDeployment).not.toHaveBeenCalled();
+    expect(connectionCommand).toHaveBeenCalledExactlyOnceWith({ action: 'list' });
+    expect(dependencies.configRepository.patchSettings).not.toHaveBeenCalled();
+  });
+
   it('rejects config writes from an unknown sender', async () => {
     const handlers = createIpcHandlers(createDependencies());
 
@@ -701,6 +750,7 @@ describe('validated IPC handlers', () => {
       'nodes:command',
       'providers:command',
       'app:get-version',
+      'app:get-capabilities',
       'app:show-main-window',
       'app:quit-application',
       'config:get-bootstrap-state',
@@ -730,7 +780,7 @@ describe('validated IPC handlers', () => {
     ]);
 
     remove();
-    expect(electronBridge.removeHandler).toHaveBeenCalledTimes(30);
+    expect(electronBridge.removeHandler).toHaveBeenCalledTimes(31);
   });
 
   it('forwards only validated runtime status to live trusted renderer targets and unsubscribes on cleanup', () => {
@@ -807,9 +857,9 @@ describe('validated IPC handlers', () => {
     removeFirst();
 
     expect(firstDependencies.runtime.subscribeStatus).toHaveBeenCalledOnce();
-    expect(electronBridge.removeHandler).toHaveBeenCalledTimes(30);
+    expect(electronBridge.removeHandler).toHaveBeenCalledTimes(31);
     removeSecond();
-    expect(electronBridge.removeHandler).toHaveBeenCalledTimes(60);
+    expect(electronBridge.removeHandler).toHaveBeenCalledTimes(62);
   });
 
   it('restores the previous owned registration after a replacement failure', () => {
@@ -840,11 +890,11 @@ describe('validated IPC handlers', () => {
     const removeFirst = registerIpcHandlers(firstDependencies);
 
     expect(() => removeFirst()).toThrow('runtime unsubscribe failed');
-    expect(electronBridge.removeHandler).toHaveBeenCalledTimes(30);
+    expect(electronBridge.removeHandler).toHaveBeenCalledTimes(31);
 
     const removeSecond = registerIpcHandlers(secondDependencies);
     removeSecond();
-    expect(electronBridge.removeHandler).toHaveBeenCalledTimes(60);
+    expect(electronBridge.removeHandler).toHaveBeenCalledTimes(62);
   });
 
   it('replaces a registration whose runtime unsubscriber throws without leaving stale handlers', () => {
@@ -855,9 +905,9 @@ describe('validated IPC handlers', () => {
     registerIpcHandlers(firstDependencies);
 
     const removeReplacement = registerIpcHandlers(createDependencies());
-    expect(electronBridge.removeHandler).toHaveBeenCalledTimes(30);
+    expect(electronBridge.removeHandler).toHaveBeenCalledTimes(31);
     removeReplacement();
-    expect(electronBridge.removeHandler).toHaveBeenCalledTimes(60);
+    expect(electronBridge.removeHandler).toHaveBeenCalledTimes(62);
   });
 
   it('rolls back handlers after an invalid runtime unsubscribe return and permits a later registration', () => {
@@ -865,11 +915,11 @@ describe('validated IPC handlers', () => {
     invalidDependencies.runtime.subscribeStatus.mockReturnValueOnce({} as never);
 
     expect(() => registerIpcHandlers(invalidDependencies)).toThrow('Invalid runtime subscription');
-    expect(electronBridge.removeHandler).toHaveBeenCalledTimes(30);
+    expect(electronBridge.removeHandler).toHaveBeenCalledTimes(31);
 
     const remove = registerIpcHandlers(createDependencies());
     remove();
-    expect(electronBridge.removeHandler).toHaveBeenCalledTimes(60);
+    expect(electronBridge.removeHandler).toHaveBeenCalledTimes(62);
   });
 
   it('rolls back only partially registered owned channels when an external handler blocks registration', () => {
@@ -882,6 +932,7 @@ describe('validated IPC handlers', () => {
       'config:get-bootstrap-state',
       'app:quit-application',
       'app:show-main-window',
+      'app:get-capabilities',
       'app:get-version',
       'providers:command',
       'nodes:command',

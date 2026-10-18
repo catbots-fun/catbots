@@ -2,7 +2,7 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AuditEventView, CatbotsDesktopApi, PaperDeploymentView, RiskLimits, WorkbenchState } from '@catbots/contracts';
+import type { AuditEventView, CatbotsDesktopApi, PaperDeploymentView, ProductCapabilities, RiskLimits, WorkbenchState } from '@catbots/contracts';
 
 vi.mock('../src/renderer/workbench/StrategyGraph', () => ({
   StrategyGraph: ({ revision, onSelectNode }: { revision: WorkbenchState['currentRevision']; onSelectNode(node: NonNullable<WorkbenchState['currentRevision']>['nodes'][number]): void }) => (
@@ -39,6 +39,14 @@ const state: WorkbenchState = {
     { id: '018f3f75-89ab-7def-8123-456789abcdea', botId: '018f3f75-89ab-7def-8123-456789abcdef', role: 'assistant', content: 'Describe your entry and exit rules.', createdAt: '2026-09-04T00:00:00.000Z' },
   ],
   backtests: [],
+};
+
+const strategyLabCapabilities: ProductCapabilities = {
+  release: 'strategy-lab-beta',
+  strategyResearch: true,
+  paperExecution: false,
+  liveExecution: false,
+  exchangeConnections: false,
 };
 
 function api(): CatbotsDesktopApi['workbench'] {
@@ -92,6 +100,21 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe('BotWorkbenchScreen', () => {
+  it('keeps Chat, Flow, and Backtest while removing execution panels in Strategy Lab Beta', async () => {
+    const executionApi = deploymentApi();
+    render(<BotWorkbenchScreen bot={state.bot} api={api()} deploymentApi={executionApi} capabilities={strategyLabCapabilities} onBack={vi.fn()} />);
+
+    await screen.findByRole('heading', { name: 'BTC Flow' });
+    expect(screen.getByRole('tab', { name: 'Flow' })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'Backtest' })).toBeTruthy();
+    expect(screen.queryByRole('tab', { name: 'Deploy' })).toBeNull();
+    expect(screen.queryByRole('tab', { name: 'Performance' })).toBeNull();
+    expect(screen.queryByRole('tab', { name: 'Logs' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Run Paper' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Review Live' })).toBeNull();
+    expect(executionApi.getActive).toHaveBeenCalledWith({ botId: state.bot.id });
+  });
+
   it('groups Paper Logs by trigger parent and market child with bounded decision evidence', async () => {
     const parent = 'paper:interval:one';
     const event = (market: string, sequence: number, type: AuditEventView['type']): AuditEventView => ({

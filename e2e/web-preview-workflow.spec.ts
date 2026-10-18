@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 
-test('web preview completes Create → Chat → Flow → Backtest → Paper → Live safety review', async ({ page }) => {
+test('web preview completes the Strategy Lab Create → Chat → Flow → Backtest workflow', async ({ page }) => {
   await page.goto('http://127.0.0.1:4176/web-preview.html');
   await expect(page.getByRole('status')).toContainText('Web preview · simulated API · simulated data');
   await expect(page.getByRole('status')).not.toContainText('temporary');
@@ -32,6 +32,8 @@ test('web preview completes Create → Chat → Flow → Backtest → Paper → 
   await page.getByRole('tab', { name: 'Backtest' }).click();
   await page.getByRole('button', { name: 'Run backtest' }).click();
   await expect(page.getByText('Bundled sample data', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Use dataset date range' }).click();
+  await page.getByRole('button', { name: 'Run backtest' }).click();
   await expect(page.getByText('+0.99%')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'By market' })).toBeVisible();
   const byMarket = page.getByRole('table', { name: 'Backtest results by market' });
@@ -49,40 +51,13 @@ test('web preview completes Create → Chat → Flow → Backtest → Paper → 
   await page.getByRole('button', { name: 'Approve v1' }).click();
   await page.getByRole('button', { name: 'Confirm approval' }).click();
   await expect(page.locator('.workbench-header').getByText('Approved', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Run Paper' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Review Live' })).toHaveCount(0);
+  await expect(page.getByRole('tab', { name: 'Deploy' })).toHaveCount(0);
+  await expect(page.getByRole('tab', { name: 'Performance' })).toHaveCount(0);
+  await expect(page.getByRole('tab', { name: 'Logs' })).toHaveCount(0);
 
-  await page.getByRole('button', { name: 'Run Paper' }).click();
-  await expect(page.getByRole('heading', { name: 'Review Paper deployment' })).toBeVisible();
-  await expect(page.getByText('DEX: Hyperliquid')).toBeVisible();
-  await expect(page.getByText('Market access: All active perpetual markets')).toBeVisible();
-  await page.getByRole('button', { name: 'Start Paper' }).click();
-  await expect(page.getByText('Paper running', { exact: true })).toBeVisible();
-  await page.getByRole('tab', { name: 'Performance' }).click();
-  await expect(page.getByText('$10,000.00')).toBeVisible();
-  await page.getByRole('tab', { name: 'Logs' }).click();
-  await expect(page.getByText('Waiting for the first trigger.')).toBeVisible();
-  await page.getByRole('button', { name: 'Stop' }).click();
-  await expect(page.getByText('Paper deployment is stopped')).toBeVisible();
-
-  await page.getByRole('button', { name: 'Review Live' }).click();
-  await expect(page.getByRole('heading', { name: 'Review Live deployment' })).toBeVisible();
-  await expect(page.getByText('Use an approved Agent/API Wallet.')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Start Live' })).toBeDisabled();
-  await page.getByRole('link', { name: 'Open settings' }).first().click();
-
-  await page.getByRole('switch', { name: /Enable Hyperliquid testnet/ }).click();
-  await page.getByLabel('Master account address').fill('0x0123456789abcdef0123456789abcdef01234567');
-  await page.getByLabel('Agent/API Wallet private key').fill(`0x${'a'.repeat(64)}`);
-  await page.getByRole('button', { name: 'Test connection' }).click();
-  await expect(page.getByText('Connection successful')).toBeVisible();
-  await page.getByRole('button', { name: 'Save settings' }).click();
-  await expect(page.getByText('Settings saved')).toBeVisible();
-
-  await page.getByRole('button', { name: 'Bots' }).click();
-  await page.getByRole('button', { name: 'Review Live' }).click();
-  await expect(page.getByText('Ready', { exact: true })).toBeVisible();
-  await page.getByLabel('Type bot name to confirm').fill('ETH RSI Preview');
-  await expect(page.getByRole('button', { name: 'Start Live' })).toBeEnabled();
-  await page.getByRole('button', { name: 'Start Live' }).click();
-  await expect(page.getByText('Live · Hyperliquid testnet')).toBeVisible();
-  await page.getByRole('button', { name: 'Stop Live' }).click();
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await expect(page.getByText('Strategy Lab Beta', { exact: true })).toBeVisible();
+  await expect(page.getByRole('switch', { name: /Enable Hyperliquid testnet/ })).toHaveCount(0);
 });

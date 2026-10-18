@@ -2,7 +2,7 @@
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { BotSummary, CatbotsDesktopApi, CreateDraftBotInput, RedactedLocalConfig } from '@catbots/contracts';
+import type { BotSummary, CatbotsDesktopApi, CreateDraftBotInput, ProductCapabilities, RedactedLocalConfig } from '@catbots/contracts';
 import App from '../src/renderer/App';
 import { AppShell } from '../src/renderer/components/AppShell';
 import { BotsHomeScreen, formatUpdatedAt } from '../src/renderer/screens/BotsHomeScreen';
@@ -29,6 +29,14 @@ const redactedConfig: RedactedLocalConfig = {
   exchanges: {},
 };
 
+const strategyLabCapabilities: ProductCapabilities = {
+  release: 'strategy-lab-beta',
+  strategyResearch: true,
+  paperExecution: false,
+  liveExecution: false,
+  exchangeConnections: false,
+};
+
 function makeApi(overrides: Partial<CatbotsDesktopApi['bots']> = {}): CatbotsDesktopApi['bots'] {
   return {
     list: vi.fn().mockResolvedValue([]),
@@ -49,7 +57,7 @@ function deferred<T>() {
 
 function makeDesktopApi(bootstrap: Awaited<ReturnType<CatbotsDesktopApi['config']['getBootstrapState']>>): CatbotsDesktopApi {
   return {
-    app: { getVersion: vi.fn().mockResolvedValue('0.1.0'), showMainWindow: vi.fn(), quitApplication: vi.fn() },
+    app: { getVersion: vi.fn().mockResolvedValue('0.1.0'), getCapabilities: vi.fn().mockResolvedValue(strategyLabCapabilities), showMainWindow: vi.fn(), quitApplication: vi.fn() },
     config: {
       getBootstrapState: vi.fn().mockResolvedValue(bootstrap),
       patchSettings: vi.fn().mockResolvedValue(redactedConfig),
@@ -322,6 +330,19 @@ describe('App', () => {
     await screen.findByRole('heading', { name: 'Settings' });
     expect(screen.getAllByRole('main').length).toBe(1);
     expect(screen.getByRole('region', { name: 'Local settings' }).className).toContain('ring-kumo-line');
+  });
+
+  it('shows only the ready Strategy Lab workflow and removes exchange setup from navigation and settings', async () => {
+    const user = userEvent.setup();
+    const api = makeDesktopApi({ state: 'ready', config: redactedConfig });
+    render(<App api={api} />);
+
+    await screen.findByRole('heading', { name: 'Bots' });
+    expect(api.app.getCapabilities).toHaveBeenCalledOnce();
+    expect(screen.queryByRole('button', { name: 'Connections' })).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Settings' }));
+    expect(await screen.findByText('Strategy Lab Beta')).toBeTruthy();
+    expect(screen.queryByRole('switch', { name: /Enable Hyperliquid testnet/ })).toBeNull();
   });
 
   it('tests, saves, and moves first launch into the shell with one primary action', async () => {

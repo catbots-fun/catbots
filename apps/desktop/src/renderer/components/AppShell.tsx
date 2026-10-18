@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { BrandLogo, BrandWordmark } from './BrandLogo';
 import { Sidebar, Breadcrumbs } from '@cloudflare/kumo';
 import { PlugsConnectedIcon, ActivityIcon, DesktopIcon, DatabaseIcon, GearSixIcon, RobotIcon } from '@phosphor-icons/react';
+import type { ProductCapabilities } from '@catbots/contracts';
 
 export const appDestinations = ['bots', 'connections', 'nodes', 'data', 'activity', 'settings'] as const;
 export type AppDestination = (typeof appDestinations)[number];
@@ -10,6 +11,7 @@ type AppShellProps = {
   surface?: 'desktop' | 'web';
   focused?: boolean;
   destination: AppDestination;
+  capabilities?: ProductCapabilities;
   onNavigate(destination: AppDestination): void;
   children: ReactNode;
 };
@@ -23,16 +25,19 @@ const navigationItems: ReadonlyArray<{ destination: AppDestination; label: strin
   { destination: 'settings', label: 'Settings', icon: GearSixIcon },
 ];
 
-export function AppShell({ destination, onNavigate, children, surface = 'desktop', focused = false }: AppShellProps) {
+export function AppShell({ destination, onNavigate, children, capabilities, surface = 'desktop', focused = false }: AppShellProps) {
   const [collapsed, setCollapsed] = useState(false);
   useEffect(() => setCollapsed(focused), [focused]);
-  const currentLabel = navigationItems.find((item) => item.destination === destination)?.label;
+  const visibleNavigationItems = capabilities?.exchangeConnections === false
+    ? navigationItems.filter(({ destination: item }) => item !== 'connections')
+    : navigationItems;
+  const currentLabel = visibleNavigationItems.find((item) => item.destination === destination)?.label;
   return (
     <Sidebar.Provider open={!collapsed} onOpenChange={open=>setCollapsed(!open)} collapsible="icon" className={`kumo-app-shell${focused ? ' workspace-focused' : ''}`}>
       <Sidebar className="catbots-sidebar">
         <Sidebar.Header><div className="kumo-brand-row">{collapsed ? <BrandLogo decorative /> : <BrandWordmark />}<Sidebar.Trigger aria-label={collapsed?'Expand sidebar':'Collapse sidebar'}/></div></Sidebar.Header>
         <Sidebar.Content><Sidebar.Group><Sidebar.GroupLabel>Workspace</Sidebar.GroupLabel><Sidebar.Menu aria-label="Global navigation">
-          {navigationItems.map(({destination:itemDestination,label,icon:Icon})=><Sidebar.MenuButton key={itemDestination} size="base" icon={Icon} active={destination===itemDestination} aria-label={label} onClick={()=>onNavigate(itemDestination)}>{label}{(itemDestination==='data'||itemDestination==='activity')&&<Sidebar.MenuBadge>Soon</Sidebar.MenuBadge>}</Sidebar.MenuButton>)}
+          {visibleNavigationItems.map(({destination:itemDestination,label,icon:Icon})=><Sidebar.MenuButton key={itemDestination} size="base" icon={Icon} active={destination===itemDestination} aria-label={label} onClick={()=>onNavigate(itemDestination)}>{label}{(itemDestination==='data'||itemDestination==='activity')&&<Sidebar.MenuBadge>Soon</Sidebar.MenuBadge>}</Sidebar.MenuButton>)}
         </Sidebar.Menu></Sidebar.Group></Sidebar.Content>
         <Sidebar.Footer>{!collapsed && <div className="sidebar-brand-note"><strong>See the logic.</strong><span>Your ideas. Your workspace.</span></div>}<Sidebar.Menu><Sidebar.MenuButton size="base" icon={DesktopIcon} disabled>Local workspace</Sidebar.MenuButton></Sidebar.Menu></Sidebar.Footer>
       </Sidebar>

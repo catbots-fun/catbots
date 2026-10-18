@@ -18,6 +18,14 @@ describe('parseProcessIntent', () => {
     })).toEqual({ kind: 'open-ui' });
   });
 
+  it('ignores Electron inspector flags when a packaged UI is launched by an automation host', () => {
+    expect(parseProcessIntent([
+      '/Applications/Catbots.app/Contents/MacOS/Catbots',
+      '--inspect=0',
+      '--remote-debugging-port=0',
+    ], { packaged: true })).toEqual({ kind: 'open-ui' });
+  });
+
   it('parses serve-web without opening a window', () => {
     expect(parseProcessIntent(['Catbots', '--serve-web'], { packaged: true })).toEqual({
       kind: 'serve-web',

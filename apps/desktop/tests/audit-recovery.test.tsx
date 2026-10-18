@@ -8,7 +8,19 @@ vi.mock('../src/renderer/screens/FirstLaunchScreen', () => ({ FirstLaunchScreen:
 afterEach(cleanup);
 it('offers retry for transport failure without diagnosing database corruption', async () => {
   const getDatabaseState = vi.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValue({ status: 'ready' });
-  const api = { runtime: { getDatabaseState }, config: { getBootstrapState: vi.fn().mockResolvedValue({ state: 'first-launch' }) } } as unknown as CatbotsDesktopApi;
+  const api = {
+    app: {
+      getCapabilities: vi.fn().mockResolvedValue({
+        release: 'strategy-lab-beta',
+        strategyResearch: true,
+        paperExecution: false,
+        liveExecution: false,
+        exchangeConnections: false,
+      }),
+    },
+    runtime: { getDatabaseState },
+    config: { getBootstrapState: vi.fn().mockResolvedValue({ state: 'first-launch' }) },
+  } as unknown as CatbotsDesktopApi;
   render(<App api={api} />);
   await screen.findByText('Cannot reach local workspace');
   expect(screen.queryByText('Local database needs repair')).toBeNull();
