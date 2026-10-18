@@ -11,6 +11,7 @@ function platform(lock = true) {
     createApplicationOwner: vi.fn(async () => { calls.push('owner'); return { close: async () => undefined }; }),
     openUi: vi.fn(async () => { calls.push('open'); return 0; }),
     runControl: vi.fn(async () => { calls.push('control'); return 0; }),
+    runCli: vi.fn(async () => { calls.push('cli'); return 0; }),
     runInstaller: vi.fn(async () => { calls.push('installer'); return 0; }),
   };
   return { calls, platform: value };
@@ -27,6 +28,7 @@ describe('application ownership', () => {
   it.each([
     [{ kind: 'open-ui' }, 'open'],
     [{ kind: 'control', command: { kind: 'status' } }, 'control'],
+    [{ kind: 'cli', command: 'start' }, 'cli'],
     [{ kind: 'installer', command: { kind: 'uninstall', purgeData: false } }, 'installer'],
   ] as const)('routes %s without constructing product services', async (intent, expected) => {
     const fixture = platform();

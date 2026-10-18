@@ -5,6 +5,13 @@ import {
 } from '../src/main/application/process-intent';
 
 describe('parseProcessIntent', () => {
+  it.each(['open', 'status', 'start', 'stop'] as const)('parses the public %s service command', (command) => {
+    expect(parseProcessIntent(['Catbots', '--cli', command], { packaged: true })).toEqual({
+      kind: 'cli',
+      command,
+    });
+  });
+
   it('defaults a packaged launch to open-ui', () => {
     expect(parseProcessIntent(['/Applications/Catbots.app/Contents/MacOS/Catbots'], {
       packaged: true,
@@ -81,6 +88,9 @@ describe('parseProcessIntent', () => {
     ['Catbots', '--control'],
     ['Catbots', '--control', 'prepare-maintenance', 'upgrade'],
     ['Catbots', '--control', 'prepare-maintenance', 'uninstall', 'unexpected-release'],
+    ['Catbots', '--cli'],
+    ['Catbots', '--cli', 'update'],
+    ['Catbots', '--cli', 'start', 'unexpected'],
     ['Catbots', '--control', 'shutdown'],
     ['Catbots', '--installer', 'reconcile'],
     ['Catbots', '--installer', 'uninstall', '--purge-data', '--extra'],
