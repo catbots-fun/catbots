@@ -26,8 +26,25 @@ it('reads bounded bot-isolated audit pages without a connection or runtime snaps
 
 it('rejects unbounded or invalid audit requests',async()=>{
  const service=new ConnectionsService(file(),[]),base={action:'get_flow_audit',botId:'00000000-0000-4000-8000-000000000001'};
- for(const invalid of [{after:-1},{after:0.5},{after:Number.MAX_SAFE_INTEGER+1},{limit:0},{limit:51},{botId:'invalid'},{unexpected:true}])
+ for(const invalid of [{after:-1},{after:0.5},{after:Number.MAX_SAFE_INTEGER+1},{through:-1},{through:0.5},{through:Number.MAX_SAFE_INTEGER+1},{limit:0},{limit:51},{botId:'invalid'},{unexpected:true}])
    await expect(service.command({...base,...invalid})).rejects.toThrow();
+});
+it('exports a bot-scoped fixed snapshot despite later journal appends',async()=>{
+ const path=file(),service=new ConnectionsService(path,[]),store=new FlowAuditStore(`${path}.runtime.audit.sqlite`);
+ const botId='00000000-0000-4000-8000-000000000001',other='00000000-0000-4000-8000-000000000002';
+ expect((await service.command({action:'get_flow_audit_summary',botId})).auditSummary).toEqual({count:0,through:0,databaseBytes:0,retention:'keep_all'});
+ const event={botId,deploymentId:'run',version:1,kind:'evaluation' as const,details:{orders:[]}};
+ store.append(event);store.append({...event,botId:other});store.append(event);
+ const view=await service.command({action:'get_flow_audit_summary',botId});
+ expect(view.auditSummary).toMatchObject({count:2,through:3,retention:'keep_all'});
+ expect(view.auditSummary!.databaseBytes).toBeGreaterThan(0);
+ store.append(event);
+ const first=await service.command({action:'get_flow_audit',botId,through:3,limit:1});
+ expect(first.auditPage).toMatchObject({records:[{sequence:1}],nextAfter:1});
+ const second=await service.command({action:'get_flow_audit',botId,after:1,through:3,limit:1});
+ expect(second.auditPage?.records.map(row=>row.sequence)).toEqual([3]);
+ expect(second.auditPage?.nextAfter).toBeUndefined();
+ expect((await service.command({action:'get_flow_audit',botId,through:0})).auditPage?.records).toEqual([]);
 });
 it('discovers main/subaccounts using their real addresses and a fixed environment endpoint',async()=>{
  const request=vi.fn(async(_url:unknown,init:any)=>{const body=JSON.parse(init.body);return {ok:true,json:async()=>body.type==='userAbstraction'?'unifiedAccount':body.type==='spotClearinghouseState'?{balances:[{coin:'USDC',token:0,total:'999.00000000'}]}:body.type==='userRole'?{role:'user'}:body.type==='subAccounts'?[{name:'Trend',subAccountUser:sub}]:{marginSummary:{accountValue:'250'},withdrawable:'200',assetPositions:[{position:{szi:'1'}}]}};});

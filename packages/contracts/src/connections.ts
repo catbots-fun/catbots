@@ -60,11 +60,13 @@ export type ExecutionTargetView = {
 };
 
 export const ConnectionCommandSchema = z.discriminatedUnion("action", [
+  z.object({ action: z.literal('get_flow_audit_summary'), botId: z.string().uuid() }).strict(),
   z.object({
     action: z.literal("get_flow_audit"),
     botId: z.string().uuid(),
     after: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).default(0),
     limit: z.number().int().min(1).max(50).default(20),
+    through: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
   }).strict(),
   z.object({ action: z.literal("list") }).strict(),
   z.object({ action: z.literal("bot_overview"), botIds: z.array(z.string().uuid()).max(100) }).strict(),
@@ -188,9 +190,11 @@ export type FlowAuditEvent = {
 };
 export type FlowAuditRecord = FlowAuditEvent & { sequence: number; at: string };
 export type FlowAuditPage = { records: FlowAuditRecord[]; nextAfter?: number };
+export type FlowAuditSummary = { count: number; through: number; databaseBytes: number; retention: 'keep_all' };
 
 export type ConnectionsView = {
   auditPage?: FlowAuditPage;
+  auditSummary?: FlowAuditSummary;
   botOverview?: BotExecutionOverview[];
   history?: FlowDeployment[];
   deployment?: FlowDeployment;
