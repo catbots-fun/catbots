@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { runRuntimeEntrypoint } from '../src/main/application/runtime-entrypoint';
+import { createProductionInstallerCommandRunner } from '../src/main/installer/installer';
 
 function platform(argv: readonly string[], packaged = true) {
   const calls: string[] = [];
@@ -53,5 +54,21 @@ describe('runtime entrypoint', () => {
 
     await expect(runRuntimeEntrypoint(value.dependencies)).resolves.toBe(0);
     expect(value.calls).toEqual(['open']);
+  });
+
+  it('routes packaged installer reconciliation to the fail-closed production boundary', async () => {
+    const value = platform([
+      'Catbots',
+      '--installer',
+      'reconcile',
+      '/private/tmp/catbots-install/request.json',
+    ]);
+    const dependencies = {
+      ...value.dependencies,
+      runInstaller: createProductionInstallerCommandRunner(),
+    };
+
+    await expect(runRuntimeEntrypoint(dependencies)).rejects.toThrow('INSTALLER_PLATFORM_UNAVAILABLE');
+    expect(value.dependencies.startOwner).not.toHaveBeenCalled();
   });
 });

@@ -16,9 +16,11 @@ import { createHealthClient } from './service/health-client';
 import { LaunchAgentController, loadLaunchAgentTemplate } from './service/launch-agent';
 import { createServiceReleaseIdentity } from './service/runtime-identity';
 import { currentDataSchemaVersion } from './storage/migrations';
+import { createProductionInstallerCommandRunner } from './installer/installer';
 
 const origin = 'http://127.0.0.1:5180';
 let ownerStarted = false;
+const runInstaller = createProductionInstallerCommandRunner();
 
 void runRuntimeEntrypoint({
   argv: process.argv,
@@ -45,9 +47,7 @@ void runRuntimeEntrypoint({
   },
   runCli: executeCli,
   runControl: executeControl,
-  runInstaller: async () => {
-    throw new Error('INSTALLER_NOT_AVAILABLE');
-  },
+  runInstaller,
 }).then((exitCode) => {
   if (ownerStarted) return;
   process.exitCode = exitCode;
