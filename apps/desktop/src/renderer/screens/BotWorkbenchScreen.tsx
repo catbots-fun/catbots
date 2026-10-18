@@ -242,7 +242,8 @@ export function BotWorkbenchScreen({ bot, api, nodeApi, connectionsApi, deployme
           { value: 'flow', label: 'Flow' },
           { value: 'backtest', label: 'Backtest' },
           ...(exchangeConnectionsEnabled ? [{ value: 'deploy', label: 'Deploy' }] : []),
-          ...(paperExecutionEnabled || liveDeployment !== null || deployment !== null ? [{ value: 'performance', label: 'Performance' }, { value: 'logs', label: 'Logs' }] : []),
+          ...(paperExecutionEnabled || liveDeployment !== null || deployment !== null ? [{ value: 'performance', label: 'Performance' }] : []),
+          ...(state.flowDraft || paperExecutionEnabled || liveDeployment !== null || deployment !== null ? [{ value: 'logs', label: 'Logs' }] : []),
         ]} value={tab} onValueChange={setTab} variant="underline" />
       {state.flowDraft && <WorkspaceMarket botId={bot.id} api={nodeApi} connectionsApi={connectionsApi} workspace={flowWorkspace} disabled={sending} />}
         <Button size="sm" variant="ghost" icon={ChatCircleIcon} title={showChat ? 'Hide chat' : 'Show chat'} aria-label={showChat ? 'Hide chat' : 'Show chat'} aria-pressed={showChat} aria-controls="workbench-chat" onClick={() => setShowChat(!showChat)}></Button>

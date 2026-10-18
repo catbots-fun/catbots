@@ -3,11 +3,32 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import { ConnectionsService } from '../src/main/connections/service';
+import { FlowAuditStore } from '../src/main/connections/flow-audit';
 import { HyperliquidAdapter, type ExchangeAdapter } from '../src/main/connections/adapters';
 const directories:string[]=[];
 afterEach(()=>directories.splice(0).forEach(path=>rmSync(path,{recursive:true,force:true})));
 const file=()=>{const path=mkdtempSync(join(tmpdir(),'connections-'));directories.push(path);return join(path,'saved.json');};
 const owner='0x'+'1'.repeat(40),sub='0x'+'2'.repeat(40);
+it('reads bounded bot-isolated audit pages without a connection or runtime snapshot', async () => {
+ const path=file(),service=new ConnectionsService(path,[]),store=new FlowAuditStore(`${path}.runtime.audit.sqlite`);
+ const botId='00000000-0000-4000-8000-000000000001',other='00000000-0000-4000-8000-000000000002';
+ const event={botId,deploymentId:'old-run',version:1,kind:'evaluation' as const,details:{apiKey:'private-value',orders:[]}};
+ store.append(event);store.append({...event,botId:other});store.append({...event,deploymentId:'new-run'});
+ const first=await service.command({action:'get_flow_audit',botId,limit:1});
+ expect(first.auditPage).toMatchObject({records:[{sequence:1,deploymentId:'old-run',details:{apiKey:'[REDACTED]',orders:[]}}],nextAfter:1});
+ expect(first.auditPage?.records).toHaveLength(1);
+ const second=await service.command({action:'get_flow_audit',botId,after:1,limit:1});
+ expect(second.auditPage).toMatchObject({records:[{sequence:3,deploymentId:'new-run'}]});
+ expect(second.auditPage?.nextAfter).toBeUndefined();
+ expect((await service.command({action:'get_flow_audit',botId,after:3})).auditPage).toEqual({records:[]});
+ expect((await new ConnectionsService(file(),[]).command({action:'get_flow_audit',botId})).auditPage).toEqual({records:[]});
+});
+
+it('rejects unbounded or invalid audit requests',async()=>{
+ const service=new ConnectionsService(file(),[]),base={action:'get_flow_audit',botId:'00000000-0000-4000-8000-000000000001'};
+ for(const invalid of [{after:-1},{after:0.5},{after:Number.MAX_SAFE_INTEGER+1},{limit:0},{limit:51},{botId:'invalid'},{unexpected:true}])
+   await expect(service.command({...base,...invalid})).rejects.toThrow();
+});
 it('discovers main/subaccounts using their real addresses and a fixed environment endpoint',async()=>{
  const request=vi.fn(async(_url:unknown,init:any)=>{const body=JSON.parse(init.body);return {ok:true,json:async()=>body.type==='userAbstraction'?'unifiedAccount':body.type==='spotClearinghouseState'?{balances:[{coin:'USDC',token:0,total:'999.00000000'}]}:body.type==='userRole'?{role:'user'}:body.type==='subAccounts'?[{name:'Trend',subAccountUser:sub}]:{marginSummary:{accountValue:'250'},withdrawable:'200',assetPositions:[{position:{szi:'1'}}]}};});
  const accounts=await new HyperliquidAdapter(request as never).discover(owner,'testnet');

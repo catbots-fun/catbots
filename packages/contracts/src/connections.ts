@@ -60,6 +60,12 @@ export type ExecutionTargetView = {
 };
 
 export const ConnectionCommandSchema = z.discriminatedUnion("action", [
+  z.object({
+    action: z.literal("get_flow_audit"),
+    botId: z.string().uuid(),
+    after: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).default(0),
+    limit: z.number().int().min(1).max(50).default(20),
+  }).strict(),
   z.object({ action: z.literal("list") }).strict(),
   z.object({ action: z.literal("bot_overview"), botIds: z.array(z.string().uuid()).max(100) }).strict(),
   z
@@ -172,7 +178,18 @@ export type BotExecutionOverview = {
   activity?: ExchangeActivity;
   activityError?: string;
 };
+export type FlowAuditEvent = {
+  botId: string;
+  deploymentId: string;
+  version: number;
+  kind: 'evaluation' | 'order_intent' | 'order_outcome' | 'failure';
+  details: unknown;
+};
+export type FlowAuditRecord = FlowAuditEvent & { sequence: number; at: string };
+export type FlowAuditPage = { records: FlowAuditRecord[]; nextAfter?: number };
+
 export type ConnectionsView = {
+  auditPage?: FlowAuditPage;
   botOverview?: BotExecutionOverview[];
   history?: FlowDeployment[];
   deployment?: FlowDeployment;

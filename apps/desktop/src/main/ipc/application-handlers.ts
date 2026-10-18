@@ -418,7 +418,7 @@ function assertCapability(enabled: boolean): void {
 }
 
 function isExecutionRecoveryCommand(action: string): boolean {
-  return ['list', 'bot_overview', 'get_flow_runtime', 'get_target', 'reconcile_flow', 'stop_flow'].includes(action);
+  return ['list', 'bot_overview', 'get_flow_runtime', 'get_flow_audit', 'get_target', 'reconcile_flow', 'stop_flow'].includes(action);
 }
 
 function parseRequest<T>(schema: { safeParse(input: unknown): { success: boolean; data?: T } }, input: unknown): T {

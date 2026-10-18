@@ -281,6 +281,17 @@ function createDependencies() {
 }
 
 describe('validated IPC handlers', () => {
+  it('keeps read-only audit evidence accessible when execution is disabled', async () => {
+    const dependencies = createDependencies();
+    dependencies.capabilities.exchangeConnections = false;
+    const view = { adapters: [], connections: [], auditPage: { records: [] } };
+    const command = vi.fn().mockResolvedValue(view);
+    dependencies.connections = { command } as never;
+    const handlers = createIpcHandlers(dependencies);
+    await expect(handlers.connectionCommand(localEvent, { action: 'get_flow_audit', botId })).resolves.toEqual(view);
+    expect(command).toHaveBeenCalledExactlyOnceWith({ action: 'get_flow_audit', botId, after: 0, limit: 20 });
+    await expect(handlers.connectionCommand(fakeRemoteEvent, { action: 'get_flow_audit', botId })).rejects.toThrow('IPC_SENDER_NOT_ALLOWED');
+  });
   it('reports Strategy Lab capabilities and rejects every execution start before service access', async () => {
     const dependencies = createDependencies();
     const connectionCommand = vi.fn().mockResolvedValue({ adapters: [], connections: [] });
