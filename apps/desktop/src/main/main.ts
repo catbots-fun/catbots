@@ -157,7 +157,7 @@ if (ownsApplicationInstance) void app.whenReady()
       });
       try { await shell.openExternal(walletBridge.origin); }
       catch (error) { await walletBridge.close(); walletBridge = undefined; throw error; }
-    }, botId => nodePackages.flowStore().get(botId));
+    }, botId => nodePackages.flowStore().get(botId), botId => botRepository.exists(botId));
     const workbenchService = new WorkbenchService({ repository: workbenchRepository, configRepository, providerService, nodePackages });
     const marketUniverseCache = new MarketUniverseCache({
       adapter: isolatedE2E

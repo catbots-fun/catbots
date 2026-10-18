@@ -12,6 +12,7 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  rmSync,
   renameSync,
   writeFileSync,
 } from "node:fs";
@@ -44,6 +45,8 @@ export class ConnectionsService {
     private authorization?: ConnectionAuthorization,
     private openWalletBrowser?: (id?: string) => Promise<void>,
     private getFlow?: (botId: string) => ChatFlowDraft | undefined,
+    private botExists?: (botId: string) => boolean,
+    private persistTargets: (path: string, targets: Record<string, ExecutionTarget>) => void = persistTargetsAtomically,
   ) {
     this.runner = new FlowRunner(`${path}.runtime`);
     if (existsSync(path))
@@ -55,7 +58,7 @@ export class ConnectionsService {
   assertBotRemovable(botId:string) {
     const run=this.runner.get(botId);
     if(this.starting.has(botId)||run && ['running','stopping','interrupted'].includes(run.status)) throw new Error('BOT_ACTIVE');
-    if(run?.orders.some(order=>['uncertain','submitting'].includes(order.status))) throw new Error('BOT_UNRESOLVED');
+    if(this.runner.botUnresolved(botId)) throw new Error('BOT_UNRESOLVED');
   }
   async dispose() {
     await this.runner.dispose();
@@ -79,6 +82,12 @@ export class ConnectionsService {
           .record(z.string().uuid(), ExecutionTargetSchema)
           .parse(JSON.parse(readFileSync(`${this.path}.targets`, "utf8")))
       : {};
+  }
+  removeBotTarget(botId: string): void {
+    const targets = this.readTargets();
+    if (!(botId in targets)) return;
+    const { [botId]: _removed, ...next } = targets;
+    this.persistTargets(`${this.path}.targets`, next);
   }
   private targetView(botId: string): ExecutionTargetView {
     const target = this.readTargets()[botId] ?? null;
@@ -123,11 +132,7 @@ export class ConnectionsService {
       )
         throw new Error("Select an account belonging to this connection");
       const next = { ...this.readTargets(), [botId]: input.target };
-      mkdirSync(dirname(this.path), { recursive: true });
-      writeFileSync(`${this.path}.targets.tmp`, JSON.stringify(next), {
-        mode: 0o600,
-      });
-      renameSync(`${this.path}.targets.tmp`, `${this.path}.targets`);
+      this.persistTargets(`${this.path}.targets`, next);
     }
     const view = this.targetView(botId);
     if (input.action === "check_target") {
@@ -287,6 +292,8 @@ export class ConnectionsService {
         throw new Error("Bot is already starting");
       this.starting.add(input.botId);
       try {
+        if (this.botExists && !this.botExists(input.botId))
+          throw new Error("Bot no longer exists. Reload the bot list.");
         const target = this.readTargets()[input.botId];
         const connection = this.connections.find(
           (item) => item.id === target?.connectionId,
@@ -374,14 +381,27 @@ export class ConnectionsService {
       return this.view();
     }
     if (input.action === "remove") {
-      if (
-        Object.values(this.readTargets()).some(
-          (target) => target.connectionId === input.id,
-        )
-      )
+      if (this.runner.connectionUnsafe(input.id))
+        throw new Error(
+          "This connection has an active or unresolved deployment. Stop and reconcile it before removing the connection.",
+        );
+      const targets = this.readTargets();
+      const selected = Object.entries(targets).filter(
+        ([, target]) => target.connectionId === input.id,
+      );
+      if (selected.some(([botId]) => this.botExists?.(botId) ?? true))
         throw new Error(
           "This connection is selected by a bot. Change its execution target before removing it.",
         );
+      if (selected.length > 0) {
+        const orphanIds = new Set(selected.map(([botId]) => botId));
+        this.persistTargets(
+          `${this.path}.targets`,
+          Object.fromEntries(
+            Object.entries(targets).filter(([botId]) => !orphanIds.has(botId)),
+          ),
+        );
+      }
       this.save(this.connections.filter((item) => item.id !== input.id));
       return this.view();
     }
@@ -427,5 +447,23 @@ export class ConnectionsService {
     if (next.length >= 100) throw new Error("Connection limit reached");
     this.save([...next, connection]);
     return this.view();
+  }
+}
+
+function persistTargetsAtomically(
+  path: string,
+  targets: Record<string, ExecutionTarget>,
+): void {
+  mkdirSync(dirname(path), { recursive: true });
+  const temporary = `${path}.${randomUUID()}.tmp`;
+  try {
+    writeFileSync(temporary, JSON.stringify(targets), {
+      flag: "wx",
+      mode: 0o600,
+    });
+    renameSync(temporary, path);
+  } catch (error) {
+    rmSync(temporary, { force: true });
+    throw error;
   }
 }

@@ -70,3 +70,15 @@ it('removes a bot from the list without deleting its audit identity or other bot
   expect(bots.list()).toEqual([kept]);
   expect(database.prepare('SELECT deleted_at FROM bots WHERE id = ?').get(removed.id)).toMatchObject({deleted_at:expect.any(String)});
 });
+
+it('reports existence only for bots that have not been deleted', () => {
+  const bots = new BotRepository(createDatabase());
+  const deleted = bots.createDraft({ name: 'Deleted', dex: 'hyperliquid' });
+  const existing = bots.createDraft({ name: 'Existing', dex: 'hyperliquid' });
+
+  bots.remove(deleted.id);
+
+  expect(bots.exists(deleted.id)).toBe(false);
+  expect(bots.exists(existing.id)).toBe(true);
+  expect(bots.exists('00000000-0000-4000-8000-000000000099')).toBe(false);
+});

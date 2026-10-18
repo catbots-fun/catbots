@@ -514,6 +514,35 @@ export class FlowRunner {
       (id) => this.records[id].target.connectionId === connectionId,
     );
   }
+  botUnresolved(botId: string) {
+    const record = this.records[botId];
+    return record !== undefined && this.recordUnresolved(record);
+  }
+  connectionUnsafe(connectionId: string) {
+    return Object.values(this.records).some(
+      (record) =>
+        record.target.connectionId === connectionId &&
+        (['running', 'stopping', 'interrupted'].includes(record.view.status) ||
+          this.recordUnresolved(record)),
+    );
+  }
+  private recordUnresolved(record: Stored) {
+    const expectedPositionKnown = Number.isFinite(record.expectedPosition);
+    const legacyPositionKnown = Number.isFinite(record.view.position);
+    const positionIsProvablyFlat =
+      (expectedPositionKnown || legacyPositionKnown) &&
+      (!expectedPositionKnown || record.expectedPosition === 0) &&
+      (!legacyPositionKnown || record.view.position === 0);
+    return !positionIsProvablyFlat ||
+      record.nativeExitPending === true ||
+      record.nativePartial === true ||
+      record.pending !== undefined ||
+      record.view.orders.some((order) =>
+        ['submitting', 'uncertain'].includes(order.status),
+      ) ||
+      [...(record.protection?.orders ?? []), ...(record.protection?.retiring ?? [])]
+        .some((order) => ['planned', 'open', 'unknown'].includes(order.state));
+  }
   foreignOrders(botId: string, snapshot: VenueSnapshot) {
     const protection = this.records[botId]?.protection;
     if (!protection || !snapshot.openOrderIds) return snapshot.openOrders;
