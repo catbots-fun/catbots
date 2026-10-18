@@ -42,7 +42,7 @@ export class ConnectionsService {
     private path: string,
     private adapters: ExchangeAdapter[] = [new HyperliquidAdapter()],
     private authorization?: ConnectionAuthorization,
-    private openWalletBrowser?: () => Promise<void>,
+    private openWalletBrowser?: (id?: string) => Promise<void>,
     private getFlow?: (botId: string) => ChatFlowDraft | undefined,
   ) {
     this.runner = new FlowRunner(`${path}.runtime`);
@@ -331,7 +331,7 @@ export class ConnectionsService {
     if (input.action === "open_wallet_browser") {
       if (!this.openWalletBrowser)
         throw new Error("Wallet browser unavailable");
-      await this.openWalletBrowser();
+      await this.openWalletBrowser(input.id);
       return this.view();
     }
     if (

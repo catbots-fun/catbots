@@ -233,6 +233,7 @@ const universeCache = vi.hoisted(() => {
   };
 });
 
+vi.mock('../src/main/connections/service', () => ({ ConnectionsService: class { dispose = vi.fn(); } }));
 vi.mock('electron', () => electron);
 vi.mock('../src/main/create-window', () => ({ createMainWindow: mainWindow.create }));
 vi.mock('../src/main/register-app-protocol', () => ({ registerAppProtocol: vi.fn() }));
@@ -522,7 +523,7 @@ describe('main window lifecycle', () => {
     expect(runtime.stop).toHaveBeenCalledOnce();
     expect(tray.dispose).toHaveBeenCalledOnce();
     expect(applicationDatabase.close).toHaveBeenCalledOnce();
-    expect(electron.removeHandler).toHaveBeenCalledTimes(24);
+    expect(electron.removeHandler).toHaveBeenCalledTimes(30);
     expect(runtime.stop.mock.invocationCallOrder[0]).toBeLessThan(electron.removeHandler.mock.invocationCallOrder[0]);
     expect(runtime.stop.mock.invocationCallOrder[0]).toBeLessThan(tray.dispose.mock.invocationCallOrder[0]);
     expect(tray.dispose.mock.invocationCallOrder[0]).toBeLessThan(electron.removeHandler.mock.invocationCallOrder[0]);
@@ -581,7 +582,7 @@ describe('main window lifecycle', () => {
 
     expect(runtime.stop).toHaveBeenCalledOnce();
     expect(applicationDatabase.close).toHaveBeenCalledOnce();
-    expect(electron.removeHandler).toHaveBeenCalledTimes(24);
+    expect(electron.removeHandler).toHaveBeenCalledTimes(30);
     expect(electron.app.quit).toHaveBeenCalledOnce();
     expect(report).toHaveBeenCalledWith('Catbots IPC shutdown failed');
     expect(report).toHaveBeenCalledWith('Catbots database shutdown failed');

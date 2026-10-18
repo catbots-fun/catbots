@@ -161,6 +161,7 @@ describe('ExecutionRepository', () => {
   it('applies migration 6 without changing prior migrations and adds indexed trace identity columns', () => {
     expect(database.prepare('SELECT version FROM schema_migrations ORDER BY version').all()).toEqual([
       { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 },
+      { version: 7 },
     ]);
     expect(database.prepare("SELECT name FROM pragma_table_info('audit_traces') ORDER BY cid").all()).toEqual(
       expect.arrayContaining([

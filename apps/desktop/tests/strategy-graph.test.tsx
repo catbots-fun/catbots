@@ -114,7 +114,7 @@ describe('strategy graph', () => {
     render(<StrategyGraph revision={revision} onSelectNode={onSelectNode} />);
 
     expect(flow.props).toMatchObject({
-      nodesDraggable: false,
+      nodesDraggable: true,
       nodesConnectable: false,
       elementsSelectable: true,
       defaultViewport: { x: 24, y: 24, zoom: 1 },

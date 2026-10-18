@@ -191,6 +191,7 @@ describe('migrateDatabase', () => {
       { version: 4 },
       { version: 5 },
       { version: 6 },
+      { version: 7 },
     ]);
     expect(db.prepare("SELECT name FROM pragma_table_info('bots') ORDER BY cid").all()).not.toContainEqual({ name: 'market' });
     expect(db.prepare(`
@@ -244,6 +245,7 @@ describe('migrateDatabase', () => {
     ]);
     expect(db.prepare('SELECT version FROM schema_migrations ORDER BY version').all()).toEqual([
       { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 },
+      { version: 7 },
     ]);
   });
 
@@ -291,7 +293,7 @@ describe('migrateDatabase', () => {
       dex: 'hyperliquid', legacy_market_hint: 'BTC-PERP',
     });
     expect(db.prepare("SELECT name FROM pragma_table_info('bots') WHERE name = 'market'").get()).toBeUndefined();
-    expect(db.prepare('SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1').get()).toEqual({ version: 6 });
+    expect(db.prepare('SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1').get()).toEqual({ version: 7 });
     expect(db.pragma('foreign_key_check')).toEqual([]);
   });
 
@@ -343,6 +345,7 @@ describe('ApplicationDatabase', () => {
       { version: 4 },
       { version: 5 },
       { version: 6 },
+      { version: 7 },
     ]);
     lifecycle.close();
     expect(db.open).toBe(false);

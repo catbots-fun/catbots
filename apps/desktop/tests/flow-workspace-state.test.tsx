@@ -18,8 +18,11 @@ vi.mock('@xyflow/react', () => ({
 const draft: ChatFlowDraft = { botId: '018f3f75-89ab-7def-8123-456789abcdef', version: 1, status: 'valid', updatedAt: '2026-09-06T00:00:00.000Z', document: {
   schemaVersion: '3.0', nodes: ['first','second'].map(id => ({ id, type: 'process.number', version: 1, config: { value: 14 } })), edges: [],
 } };
+let changeMarket: (market: string) => void;
+let currentMarket: string;
 function Harness() {
   const workspace = useFlowWorkspaceState();
+  changeMarket = workspace.setMarket; currentMarket = workspace.market;
   const [visible, show] = useState(true);
   const [saved, setSaved] = useState(draft);
   return <><button onClick={() => show(!visible)}>Toggle flow tab</button><button onClick={() => setSaved(previous => ({ ...previous, version: 2, document: { ...previous.document, nodes: previous.document.nodes.map(node => ({ ...node, config: { value: 99 } })) } }))}>External edit</button>
@@ -31,13 +34,13 @@ function select(id: string) { const back = screen.queryByRole('button', {name: '
 it('retains unsaved config and shared market across nodes, close and tabs, then saves only selected config', async () => {
   render(<Harness />); select('first');
   fireEvent.change(screen.getByRole('spinbutton',{name:'Value'}), {target:{value:'15'}});
-  fireEvent.change(screen.getByRole('textbox',{name:'Run market'}), {target:{value:'SOL-PERP'}});
+  act(() => changeMarket('SOL-PERP'));
   select('second'); select('first');
   expect((screen.getByRole('spinbutton',{name:'Value'}) as HTMLInputElement).value).toBe('15');
   fireEvent.click(screen.getByRole('button',{name:'Back to canvas'})); select('first');
   expect(screen.getByText('Unsaved changes')).toBeTruthy();
   fireEvent.click(screen.getByRole('button',{name:'Back to canvas'})); fireEvent.click(screen.getByRole('button',{name:'Toggle flow tab'})); fireEvent.click(screen.getByRole('button',{name:'Toggle flow tab'})); select('first');
-  expect((screen.getByRole('textbox',{name:'Run market'}) as HTMLInputElement).value).toBe('SOL-PERP');
+  expect(currentMarket).toBe('SOL-PERP');
   expect((screen.getByRole('spinbutton',{name:'Value'}) as HTMLInputElement).value).toBe('15');
   fireEvent.click(screen.getByRole('button',{name:'Save configuration'}));
   await waitFor(() => expect(screen.queryByText('Unsaved changes')).toBeNull());
@@ -49,12 +52,12 @@ const result = {
 };
 it('retains run provenance and upstream outputs without refetching; marks changed context stale', async () => {
   vi.mocked(runLiveNode).mockResolvedValue(result);
-  render(<Harness/>); fireEvent.change(screen.getByRole('textbox',{name:'Run market'}),{target:{value:'SOL-PERP'}}); select('second');
+  render(<Harness/>); act(() => changeMarket('SOL-PERP')); select('second');
   fireEvent.click(screen.getByRole('button',{name:'Execute step'})); await screen.findByText('Run ID: run-sol');
   select('first');
   expect(screen.getByText('42')).toBeTruthy(); expect(screen.getByText('Run ID: run-sol')).toBeTruthy();
   expect(runLiveNode).toHaveBeenCalledTimes(1);
-  fireEvent.change(screen.getByRole('textbox',{name:'Run market'}),{target:{value:'ETH-PERP'}});
+  act(() => changeMarket('ETH-PERP'));
   expect(screen.getByText('Previous run · stale')).toBeTruthy();
   expect(screen.getByText(/Hyperliquid mainnet · SOL-PERP/)).toBeTruthy();
 });
