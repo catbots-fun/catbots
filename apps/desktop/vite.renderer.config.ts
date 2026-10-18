@@ -23,6 +23,13 @@ export default defineConfig(({ command }) => ({
   // Workspace source changes frequently; prebundling these can retain stale exports.
   optimizeDeps: { exclude: ['@catbots/contracts', '@catbots/strategy-runtime', '@catbots/node-kit', ...['trigger', 'data', 'indicator', 'process', 'condition', 'strategy', 'risk', 'action', 'output'].map(name => `@catbots/nodes-${name}`)] },
   build: {
+    rollupOptions: {
+      input: {
+        main: resolve(__dirname, 'src/renderer/index.html'),
+        wallet: resolve(__dirname, 'src/renderer/wallet.html'),
+        web: resolve(__dirname, 'src/renderer/web.html'),
+      },
+    },
     outDir: resolve(__dirname, '.vite/renderer/main_window'),
   },
 }));
