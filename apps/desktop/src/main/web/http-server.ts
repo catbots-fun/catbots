@@ -1,10 +1,12 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
+import type { BrowserTicketStore } from '../control/browser-tickets';
 import type { ServiceIdentity } from './service-identity';
 
 export type WebTransportOptions = {
   port: number;
   identity?: () => ServiceIdentity;
+  browserTickets?: Pick<BrowserTicketStore, 'consume'>;
   invoke(method: string, input: unknown): Promise<unknown>;
   subscribe(send: (event: string, data: unknown) => void): () => void;
   asset(path: string): Promise<{ body: Uint8Array; contentType: string }>;
@@ -34,6 +36,7 @@ export async function startWebServer(options: WebTransportOptions) {
       json(response, 403, { error: 'WEB_ORIGIN_DENIED' }); return;
     }
     const path = request.url ?? '/';
+    const requestUrl = new URL(path, origin);
     if (path === '/api/health') {
       if (request.method !== 'GET') {
         response.setHeader('Allow', 'GET');
@@ -47,7 +50,14 @@ export async function startWebServer(options: WebTransportOptions) {
       json(response, 200, options.identity());
       return;
     }
-    if (path === '/api/session' && request.method === 'GET' && request.headers['x-catbots-client'] === '1') {
+    if (requestUrl.pathname === '/api/session' && request.method === 'GET') {
+      const authorized = options.browserTickets === undefined
+        ? request.headers['x-catbots-client'] === '1'
+        : options.browserTickets.consume(requestUrl.searchParams.get('ticket') ?? '');
+      if (!authorized) {
+        json(response, 401, { error: 'WEB_TICKET_REQUIRED' });
+        return;
+      }
       response.setHeader('Set-Cookie', `catbots_session=${token}; HttpOnly; SameSite=Strict; Path=/`);
       json(response, 200, { ready: true }); return;
     }
