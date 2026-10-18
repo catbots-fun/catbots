@@ -1,3 +1,4 @@
+import { startWalletBridge } from './connections/wallet-bridge';
 import { ConnectionAuthorization } from './connections/authorization';
 import { ConnectionsService } from './connections/service';
 import { NodePackageService } from './nodes/package-service';
@@ -52,6 +53,7 @@ if (ownsApplicationInstance) {
   app.quit();
 }
 let disposeFlowConnections: (()=>Promise<void>) | undefined;
+let walletBridge: Awaited<ReturnType<typeof startWalletBridge>> | undefined;
 let webServer: Awaited<ReturnType<typeof startWebServer>> | undefined;
 let disposeIpcHandlers: (() => void) | undefined;
 let mainWindow: BrowserWindow | undefined;
@@ -131,6 +133,26 @@ if (ownsApplicationInstance) void app.whenReady()
       encrypt: (value) => { if (!safeStorage.isEncryptionAvailable()) throw new Error('Secure storage unavailable'); return safeStorage.encryptString(value); },
       decrypt: (value) => safeStorage.decryptString(value),
     }), join(dataDirectory, 'provider-selection.json'), undefined, (url) => shell.openExternal(url));
+    const connections = new ConnectionsService(join(dataDirectory, 'exchange-connections.json'), undefined, new ConnectionAuthorization(join(dataDirectory, 'exchange-credentials.enc'), { encrypt: value => { if (!safeStorage.isEncryptionAvailable()) throw new Error('Secure storage unavailable'); return safeStorage.encryptString(value); }, decrypt: value => safeStorage.decryptString(value) }), async (id) => {
+      if (!id) { if (!webServer) throw new Error('Choose a connection and click Authorize trading'); await shell.openExternal(`${webServer.origin}/#connections`); return; }
+      const prepared = await connections.command({ action: 'prepare_authorization', id });
+      if (!prepared.authorization) throw new Error('Authorization unavailable');
+      await walletBridge?.close();
+      walletBridge = await startWalletBridge({
+        challenge: prepared.authorization,
+        complete: async signature => { await connections.command({ action: 'complete_authorization', id, signature }); },
+        asset: async path => {
+          const target = new URL(path, MAIN_WINDOW_VITE_DEV_SERVER_URL || 'catbots://app/');
+          const base = new URL(MAIN_WINDOW_VITE_DEV_SERVER_URL || 'catbots://app/');
+          if (target.protocol !== base.protocol || target.host !== base.host) throw new Error('INVALID_ASSET');
+          const response = await net.fetch(target.href);
+          if (!response.ok) throw new Error('ASSET_NOT_FOUND');
+          return { body: new Uint8Array(await response.arrayBuffer()), contentType: response.headers.get('content-type') || 'application/octet-stream' };
+        },
+      });
+      try { await shell.openExternal(walletBridge.origin); }
+      catch (error) { await walletBridge.close(); walletBridge = undefined; throw error; }
+    }, botId => nodePackages.flowStore().get(botId));
     const workbenchService = new WorkbenchService({ repository: workbenchRepository, configRepository, providerService, nodePackages });
     const marketUniverseCache = new MarketUniverseCache({
       adapter: isolatedE2E
@@ -164,7 +186,7 @@ if (ownsApplicationInstance) void app.whenReady()
       configRepository,
       providerService,
       nodePackages,
-      connections: new ConnectionsService(join(dataDirectory, 'exchange-connections.json'), undefined, new ConnectionAuthorization(join(dataDirectory, 'exchange-credentials.enc'), { encrypt: value => { if (!safeStorage.isEncryptionAvailable()) throw new Error('Secure storage unavailable'); return safeStorage.encryptString(value); }, decrypt: value => safeStorage.decryptString(value) }), async () => { if (!webServer) throw new Error('Start the local web workspace to connect a browser wallet'); await shell.openExternal(`${webServer.origin}/#connections`); }, botId => nodePackages.flowStore().get(botId)),
+      connections,
       botRepository,
       workbenchService,
       deploymentService,
@@ -553,6 +575,7 @@ function shutdown(): Promise<void> {
 
   shutdownPromise = (async () => {
     await disposeFlowConnections?.();
+    await walletBridge?.close();
     await webServer?.close();
     disposeMarketUniverseRefresh();
     disposeNodeBacktests?.();

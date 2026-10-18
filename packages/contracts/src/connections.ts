@@ -88,7 +88,7 @@ export const ConnectionCommandSchema = z.discriminatedUnion("action", [
   z
     .object({ action: z.literal("check_target"), botId: z.string().uuid() })
     .strict(),
-  z.object({ action: z.literal("open_wallet_browser") }).strict(),
+  z.object({ action: z.literal("open_wallet_browser"), id: z.string().uuid().optional() }).strict(),
   z
     .object({
       action: z.literal("prepare_authorization"),
