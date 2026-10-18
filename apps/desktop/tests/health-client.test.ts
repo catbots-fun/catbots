@@ -51,6 +51,25 @@ describe('health client', () => {
     await expect(health.waitForReady()).resolves.toEqual(identity);
   });
 
+  it('waits for an exact maintenance candidate instead of accepting ready health', async () => {
+    const maintenance = {
+      ...identity,
+      readiness: 'maintenance' as const,
+      maintenanceOperationId: 'operation-1',
+    };
+    const responses = [identity, { ...maintenance, maintenanceOperationId: 'operation-other' }, maintenance];
+    const health = createHealthClient({
+      origin: 'http://127.0.0.1:5180',
+      fetch: async () => new Response(JSON.stringify(responses.shift()), { status: 200 }),
+      delay: async () => undefined,
+      timeoutMs: 100,
+      pollMs: 1,
+    });
+
+    await expect(health.waitFor((observed) => observed.readiness === 'maintenance'
+      && observed.maintenanceOperationId === 'operation-1')).resolves.toEqual(maintenance);
+  });
+
   it('fails with a stable timeout instead of accepting an occupied port', async () => {
     let now = 0;
     const health = createHealthClient({

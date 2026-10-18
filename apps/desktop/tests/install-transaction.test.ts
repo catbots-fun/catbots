@@ -99,6 +99,7 @@ function fixture(failAt?: string, initialJournal?: InstallJournal) {
     launchAgent: {
       install: async () => { await effect('launch-agent:install'); },
       rollback: async () => { await effect('launch-agent:rollback'); },
+      commit: async () => { await effect('launch-agent:commit'); },
     },
     candidate: {
       start: async () => { await effect('candidate:start'); },
@@ -373,6 +374,7 @@ describe('install transaction', () => {
       'service:observe',
       'journal:committed',
       'maintenance:commit',
+      'launch-agent:commit',
       'application:commit',
       'journal:complete',
       'lock:release',

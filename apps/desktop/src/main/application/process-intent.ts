@@ -9,6 +9,7 @@ export type ControlCommand =
   | {
       readonly kind: 'prepare-maintenance';
       readonly reason: 'upgrade';
+      readonly operationId: string;
       readonly targetRelease: string;
     }
   | {
@@ -27,7 +28,7 @@ export type ServiceCliCommand = 'open' | 'status' | 'start' | 'stop';
 export type CliCommand = ServiceCliCommand | Readonly<{ kind: 'uninstall'; purgeData: boolean }>;
 
 export type ProcessIntent =
-  | { readonly kind: 'serve-web'; readonly window: 'never'; readonly port: 5180 }
+  | { readonly kind: 'serve-web'; readonly window: 'never'; readonly port: 5180; readonly maintenanceOperationId?: string }
   | { readonly kind: 'open-ui' }
   | { readonly kind: 'cli'; readonly command: CliCommand }
   | { readonly kind: 'control'; readonly command: ControlCommand }
@@ -65,6 +66,10 @@ export function parseProcessIntent(
 
   if (args.length === 1 && args[0] === '--serve-web') {
     return { kind: 'serve-web', window: 'never', port: 5180 };
+  }
+  if (context.packaged && args.length === 3 && args[0] === '--serve-web'
+    && args[1] === '--maintenance-operation' && operationPattern.test(args[2]!)) {
+    return { kind: 'serve-web', window: 'never', port: 5180, maintenanceOperationId: args[2] };
   }
 
   if (args.length === 2 && args[0] === '--cli' && isServiceCliCommand(args[1])) {
@@ -109,12 +114,13 @@ function parseControlCommand(args: readonly string[]): ControlCommand {
   if (args.length === 1 && args[0] === 'mint-browser-ticket') {
     return { kind: 'mint-browser-ticket' };
   }
-  if (args.length === 3 && args[0] === 'prepare-maintenance' && args[1] === 'upgrade') {
-    if (args[2].length === 0) return invalid();
+  if (args.length === 4 && args[0] === 'prepare-maintenance' && args[1] === 'upgrade') {
+    if (!operationPattern.test(args[2]!) || args[3]!.length === 0) return invalid();
     return {
       kind: 'prepare-maintenance',
       reason: 'upgrade',
-      targetRelease: args[2],
+      operationId: args[2]!,
+      targetRelease: args[3]!,
     };
   }
   if (args.length === 3 && args[0] === 'prepare-maintenance' && args[1] === 'uninstall') {
@@ -130,6 +136,8 @@ function parseControlCommand(args: readonly string[]): ControlCommand {
   }
   return invalid();
 }
+
+const operationPattern = /^[A-Za-z0-9][A-Za-z0-9._-]{2,127}$/;
 
 function parseInstallerCommand(args: readonly string[]): InstallerCommand {
   if (args.length === 2 && args[0] === 'reconcile') {

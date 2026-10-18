@@ -44,6 +44,13 @@ describe('parseProcessIntent', () => {
     });
   });
 
+  it('parses a packaged candidate maintenance operation', () => {
+    expect(parseProcessIntent(['Catbots', '--serve-web', '--maintenance-operation', 'bootstrap-123'], { packaged: true })).toEqual({
+      kind: 'serve-web', port: 5180, window: 'never', maintenanceOperationId: 'bootstrap-123',
+    });
+    expect(() => parseProcessIntent(['Catbots', '--serve-web', '--maintenance-operation', '../escape'], { packaged: true })).toThrow();
+  });
+
   it.each([
     {
       argv: ['Catbots', '--control', 'status'],
@@ -54,10 +61,11 @@ describe('parseProcessIntent', () => {
       command: { kind: 'mint-browser-ticket' },
     },
     {
-      argv: ['Catbots', '--control', 'prepare-maintenance', 'upgrade', 'release-0.2.0'],
+      argv: ['Catbots', '--control', 'prepare-maintenance', 'upgrade', 'operation-1', 'release-0.2.0'],
       command: {
         kind: 'prepare-maintenance',
         reason: 'upgrade',
+        operationId: 'operation-1',
         targetRelease: 'release-0.2.0',
       },
     },

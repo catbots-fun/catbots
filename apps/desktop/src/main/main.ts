@@ -38,6 +38,7 @@ import { createServiceIdentity, createServiceReleaseIdentity } from './service/r
 import { currentDataSchemaVersion } from './storage/migrations';
 import { MaintenanceCoordinator } from './maintenance/maintenance-coordinator';
 import { strategyLabCapabilities } from '../shared/product-capabilities';
+import { compiledReleaseCommit } from './installer/release-trust';
 
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
 declare const MAIN_WINDOW_VITE_NAME: string;
@@ -66,8 +67,11 @@ let quitting = false;
 let disposeNodeBacktests: (() => void) | undefined;
 let e2eQuitResponse: number | undefined;
 let startupPhase = 'waiting-for-electron';
-let serviceReadiness: 'starting' | 'ready' | 'maintenance' | 'repair' = 'starting';
-let maintenanceOperationId: string | undefined;
+const initialMaintenanceOperationId = process.env.CATBOTS_MAINTENANCE_OPERATION_ID;
+let serviceReadiness: 'starting' | 'ready' | 'maintenance' | 'repair' = initialMaintenanceOperationId === undefined
+  ? 'starting'
+  : 'maintenance';
+let maintenanceOperationId: string | undefined = initialMaintenanceOperationId;
 
 app.enableSandbox();
 
@@ -200,7 +204,7 @@ if (ownsApplicationInstance) void app.whenReady()
     if (process.env.CATBOTS_WEB === '1') {
       const releaseIdentity = createServiceReleaseIdentity({
         version: app.getVersion(),
-        commit: process.env.CATBOTS_RELEASE_COMMIT ?? 'development',
+          commit: app.isPackaged ? compiledReleaseCommit() : 'development',
         architecture: process.arch,
         dataSchemaVersion: currentDataSchemaVersion,
       });
@@ -291,7 +295,7 @@ if (ownsApplicationInstance) void app.whenReady()
           return { body: new Uint8Array(await response.arrayBuffer()), contentType: response.headers.get('content-type') ?? 'application/octet-stream' };
         },
       });
-      serviceReadiness = 'ready';
+      if (maintenanceOperationId === undefined) serviceReadiness = 'ready';
       console.log(`Catbots web: ${webServer.origin} (real local backend)`);
     }
     startupPhase = 'tray';

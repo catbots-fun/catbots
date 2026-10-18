@@ -5,9 +5,27 @@ import type { ForgeConfig } from '@electron-forge/shared-types';
 import { MakerZIP } from '@electron-forge/maker-zip';
 import { AutoUnpackNativesPlugin } from '@electron-forge/plugin-auto-unpack-natives';
 import { VitePlugin } from '@electron-forge/plugin-vite';
+import { assertReleaseTrustFile } from '../../scripts/check-release-trust.mjs';
+import { verifyProductionPackage } from '../../scripts/verify-package-contents.mjs';
 
 const workspaceNodeModules = join(resolve(dirname(fileURLToPath(import.meta.url)), '../..'), 'node_modules');
 const sqliteRuntimeDependencies = ['better-sqlite3', 'bindings', 'file-uri-to-path'];
+const releaseTrustFile = process.env.CATBOTS_RELEASE_TRUST_FILE;
+const bootstrapInstallerResource = releaseTrustFile === undefined
+  ? '../../scripts/install.sh'
+  : join(dirname(releaseTrustFile), 'install.sh');
+const releaseTrustResource = releaseTrustFile ?? 'assets/release-trust.json';
+
+export async function assertForgeReleaseTrust(
+  path = process.env.CATBOTS_RELEASE_TRUST_FILE,
+  expectedFingerprint = process.env.CATBOTS_RELEASE_TRUST_FINGERPRINT,
+): Promise<void> {
+  await assertReleaseTrustFile(path, expectedFingerprint);
+}
+
+export async function verifyForgePackageOutputs(outputPaths: string[]): Promise<void> {
+  for (const outputPath of outputPaths) await verifyProductionPackage(outputPath);
+}
 
 async function stageSqliteRuntimeDependencies(
   _forgeConfig: ForgeConfig,
@@ -32,6 +50,8 @@ const config: ForgeConfig = {
       'assets/trayTemplate.png',
       'assets/catbots',
       'assets/fun.catbots.web.plist.template',
+      bootstrapInstallerResource,
+      releaseTrustResource,
     ],
     // Keep only Vite output in the app bundle. This also excludes local configuration and planning artifacts.
     ignore: (file: string) => {
@@ -41,7 +61,10 @@ const config: ForgeConfig = {
     },
   },
   hooks: {
+    generateAssets: async () => assertForgeReleaseTrust(),
+    prePackage: async () => assertForgeReleaseTrust(),
     packageAfterCopy: stageSqliteRuntimeDependencies,
+    postPackage: async (_forgeConfig, packageResult) => verifyForgePackageOutputs(packageResult.outputPaths),
   },
   makers: [new MakerZIP({}, ['darwin'])],
   plugins: [

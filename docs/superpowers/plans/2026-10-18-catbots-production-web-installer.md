@@ -370,7 +370,7 @@ Run: `pnpm --filter @catbots/desktop exec vitest run tests/maintenance-coordinat
 
 Expected: both commands exit 0.
 
-- [ ] **Step 7: Commit the task**
+- [x] **Step 7: Commit the task**
 
 ```bash
 git add apps/desktop/src/main/maintenance/maintenance-coordinator.ts apps/desktop/src/main/storage/database.ts apps/desktop/src/main/application/application-owner.ts apps/desktop/tests/maintenance-coordinator.test.ts apps/desktop/tests/database.test.ts apps/desktop/tests/flow-runner.test.ts
@@ -627,21 +627,21 @@ git commit -m "feat(installer): preserve data during uninstall"
 - Consumes: `https://catbots.fun/releases/stable/manifest.json`, its detached signature, immutable GitHub release assets, an embedded manifest public key, and the pinned Apple Team ID.
 - Produces: a POSIX shell bootstrap that invokes `Catbots --installer reconcile` after verification.
 
-- [ ] **Step 1: Write failing bootstrap tests**
+- [x] **Step 1: Write failing bootstrap tests**
 
 Run the script against fixture commands and HTTP responses. Assert TLS flags, architecture mapping, detached-signature verification, byte length, SHA-256, approved redirect host, private temporary directory, safe extraction, bundle ID, Team ID, code signature, Gatekeeper, notarization, and cleanup.
 
-- [ ] **Step 2: Add failure tests for hostile input**
+- [x] **Step 2: Add failure tests for hostile input**
 
 Cover spaces and newlines in paths, archive traversal, symlink escape, partial download, invalid JSON, command failure, unsupported macOS, and an interrupted download. Assert that the current app remains unchanged.
 
-- [ ] **Step 3: Run the bootstrap tests and confirm RED**
+- [x] **Step 3: Run the bootstrap tests and confirm RED**
 
 Run: `pnpm --filter @catbots/desktop exec vitest run tests/bootstrap-installer.test.ts`
 
 Expected: FAIL because `scripts/install.sh` does not exist.
 
-- [ ] **Step 4: Implement the small bootstrap**
+- [x] **Step 4: Implement the small bootstrap**
 
 Keep transaction and migration policy in the signed app. Use fixed command paths where macOS provides them, quote every expansion, use `mktemp -d`, and install a cleanup trap.
 
@@ -651,7 +651,7 @@ Run: `pnpm --filter @catbots/desktop exec vitest run tests/bootstrap-installer.t
 
 Expected: tests pass and ShellCheck reports no finding.
 
-- [ ] **Step 6: Run the full suite and package verification**
+- [x] **Step 6: Run the full suite and package verification**
 
 Run: `pnpm test && pnpm typecheck && pnpm make`
 

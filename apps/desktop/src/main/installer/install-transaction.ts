@@ -33,7 +33,11 @@ export type InstallerTransactionDependencies = Readonly<{
     discard(input: Readonly<{ operationId: string; stagedAppPath?: string }>): Promise<void>;
   };
   maintenance: {
-    acquire(input: Readonly<{ operationId: string; reason: 'upgrade' }>): Promise<Readonly<{ operationId: string }>>;
+    acquire(input: Readonly<{
+      operationId: string;
+      reason: 'upgrade';
+      desiredReleaseId: string;
+    }>): Promise<Readonly<{ operationId: string }>>;
     commit(operationId: string): Promise<void>;
     rollback(operationId: string): Promise<void>;
   };
@@ -51,6 +55,7 @@ export type InstallerTransactionDependencies = Readonly<{
   launchAgent: {
     install(input: Readonly<{ operationId: string; paths: ManagedPaths; releaseId: string }>): Promise<void>;
     rollback(input: Readonly<{ operationId: string; paths: ManagedPaths }>): Promise<void>;
+    commit(input: Readonly<{ operationId: string; paths: ManagedPaths }>): Promise<void>;
   };
   candidate: {
     start(input: Readonly<{ operationId: string; release: ServiceReleaseIdentity }>): Promise<void>;
@@ -246,7 +251,11 @@ export async function executeInstallTransaction(
     assertReleaseIdentity(releaseIdentity, input.desiredReleaseId);
     await advance('release-verified');
     await advance('maintenance-prepared');
-    const lease = await dependencies.maintenance.acquire({ operationId: input.operationId, reason: 'upgrade' });
+    const lease = await dependencies.maintenance.acquire({
+      operationId: input.operationId,
+      reason: 'upgrade',
+      desiredReleaseId: input.desiredReleaseId,
+    });
     if (lease.operationId !== input.operationId) throw new Error('MAINTENANCE_LEASE_MISMATCH');
     leaseAcquired = true;
     await advance('data-snapshotted');
@@ -285,6 +294,7 @@ export async function executeInstallTransaction(
     assertCanonicalService(canonicalHealth, input.desiredService, releaseIdentity);
     await advance('committed');
     await dependencies.maintenance.commit(input.operationId);
+    await dependencies.launchAgent.commit({ operationId: input.operationId, paths: input.paths });
     await dependencies.application.commit({
       operationId: input.operationId,
       applicationPath: input.paths.application,

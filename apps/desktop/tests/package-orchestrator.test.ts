@@ -9,6 +9,15 @@ function fakeChild(): SpawnedChild {
 }
 
 describe('package orchestrator runner', () => {
+  it('fails closed before spawning any production package command without validated trust', async () => {
+    let spawned = false;
+    await expect(runDesktopCommand('package', {
+      run: async () => { spawned = true; },
+      assertTrust: async () => { throw new Error('RELEASE_TRUST_REQUIRED'); },
+    })).rejects.toThrow('RELEASE_TRUST_REQUIRED');
+    expect(spawned).toBe(false);
+  });
+
   it('runs Electron native rebuild, Forge start, and host ABI restoration in order for development', async () => {
     const calls: Array<{ command: string; args: string[]; cwd: string }> = [];
     const run = async (command: string, args: string[], cwd?: string) => {
