@@ -248,8 +248,25 @@ export class FlowRunner {
   }
   get(botId: string) {
     return this.records[botId]
-      ? structuredClone(this.records[botId].view)
+      ? { ...structuredClone(this.records[botId].view), entryPauseSupported: this.records[botId].document.nodes.some(hasRiskEvaluation) }
       : undefined;
+  }
+  setEntriesPaused(botId: string, deploymentId: string, paused: boolean) {
+    const record = this.records[botId];
+    if (!record || !this.active.has(botId) || record.view.status !== 'running') throw new Error('Bot must be running');
+    if (record.view.id !== deploymentId) throw new Error('Deployment changed; refresh before changing entry controls');
+    if (!record.document.nodes.some(hasRiskEvaluation)) throw new Error('Entry pause requires a DCA or directional controller');
+    // Resuming can authorize new exposure; require audit storage before changing it.
+    if (!paused) this.auditEvent(record, 'lifecycle', { event: 'entries_resume_requested' });
+    const previous = record.view.entriesPaused;
+    record.view.entriesPaused = paused;
+    try { this.persist(); }
+    catch (error) {
+      if (!paused) record.view.entriesPaused = previous;
+      throw error;
+    }
+    this.safetyAudit(record, 'lifecycle', { event: paused ? 'entries_paused' : 'entries_resumed' });
+    return this.get(botId)!;
   }
   async start(
     botId: string,
@@ -451,11 +468,12 @@ export class FlowRunner {
         Math.abs(snapshot.position - record.expectedPosition) > 1e-8
       )
         throw new Error("Account position changed outside this deployment");
-      const run = signal
+      const evaluateSignal = signal && !record.view.entriesPaused;
+      const run = evaluateSignal
         ? active.evaluate(context, record.state)
         : this.riskRun(record, context);
       this.auditEvent(record, 'evaluation', {
-        runId: context.runId, source: signal ? 'signal' : 'risk',
+        runId: context.runId, source: evaluateSignal ? 'signal' : 'risk', entriesPaused: !!record.view.entriesPaused,
         market: context.market, evaluatedAt: context.at,
         trace: run.trace, orders: run.orders, cancelOrderIds: run.cancelOrderIds,
       });
@@ -481,6 +499,13 @@ export class FlowRunner {
         if (active.stop) break;
         const fresh = await active.venue.snapshot([]);
         if (active.stop) break;
+        if (record.view.entriesPaused && !proposal.reduceOnly) {
+          record.cancelled!.push(proposal.clientOrderId);
+          record.queued = record.queued?.filter(id => id !== proposal.clientOrderId);
+          this.persist();
+          this.safetyAudit(record, 'order_outcome', { runId: context.runId, clientOrderId: proposal.clientOrderId, status: 'not_submitted', reason: 'entries_paused' });
+          continue;
+        }
         const order = guardOrder(
           proposal,
           { ...fresh, openOrders: this.foreignOrders(botId, fresh) },

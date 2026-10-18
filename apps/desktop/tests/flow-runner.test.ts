@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
@@ -844,6 +844,100 @@ it.each([
   expect(orders).toHaveLength(2); // No re-entry from risk checks, even with zero cooldown.
   expect(runner.get(target.botId)?.status).toBe('running');
   expect(runner.auditHistory(target.botId).filter(event=>event.kind==='evaluation').map(event=>event.details)).toContainEqual(expect.objectContaining({source:'risk'}));
+  await runner.dispose();
+});
+
+it('persists entry pause, keeps risk exits active, and requires explicit resume', async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date('2026-09-06T00:00:00Z'));
+  const {runner,venue,path}=setup();
+  const flow:FlowDocument={schemaVersion:'3.0',nodes:[
+    ...['fast','slow','rsi','atr'].map((id,index)=>({id,type:'process.number',version:1,config:{value:[101,100,65,1][index]}})),
+    {id:'controller',type:'strategy.directional',version:1,config:{quotePerOrder:20}},
+  ],edges:['fast','slow','rsi','atr'].map(id=>({source:id,sourcePort:'value',target:'controller',targetPort:id}))};
+  const started=await runner.start(target.botId,1,flow,target,'testnet',venue);
+  expect(started.entryPauseSupported).toBe(true);
+  expect(()=>runner.setEntriesPaused(target.botId,'stale-id',true)).toThrow('changed');
+  mkdirSync(`${path}.tmp`);
+  expect(()=>runner.setEntriesPaused(target.botId,started.id,true)).toThrow();
+  expect(runner.get(target.botId)?.entriesPaused).toBe(true);
+  rmSync(`${path}.tmp`,{recursive:true});
+  runner.setEntriesPaused(target.botId,started.id,true);
+  expect(JSON.parse(readFileSync(path,'utf8'))[target.botId].view.entriesPaused).toBe(true);
+  await vi.advanceTimersByTimeAsync(6000);
+  expect(venue.place).not.toHaveBeenCalled();
+  expect(runner.get(target.botId)).toMatchObject({status:'running',entriesPaused:true});
+  await runner.stop(target.botId);
+  const recovered=new FlowRunner(path);
+  const resumed=await recovered.start(target.botId,1,flow,target,'testnet',venue);
+  expect(resumed.entriesPaused).toBe(true);
+  await vi.advanceTimersByTimeAsync(6000);
+  expect(venue.place).not.toHaveBeenCalled();
+  recovered.setEntriesPaused(target.botId,resumed.id,false);
+  await vi.advanceTimersByTimeAsync(48000);
+  expect(venue.place).toHaveBeenCalledOnce();
+  recovered.setEntriesPaused(target.botId,resumed.id,true);
+  const original=venue.snapshot;
+  venue.snapshot=async times=>{const value=await original(times);return {...value,context:{...value.context,price:90}};};
+  await vi.advanceTimersByTimeAsync(5000);
+  expect(venue.place).toHaveBeenCalledTimes(2);
+  expect(vi.mocked(venue.place).mock.calls[1][0]).toMatchObject({reduceOnly:true,side:'sell',quantity:.2});
+  expect(recovered.get(target.botId)?.position).toBe(0);
+  expect(recovered.auditHistory(target.botId).map(row=>row.details)).toContainEqual(expect.objectContaining({event:'entries_paused'}));
+  await recovered.dispose();
+});
+
+it('rejects entry pause for action workflows and stopped deployments', async () => {
+  const {runner,venue}=setup();
+  const started=await runner.start(target.botId,1,doc,target,'testnet',venue);
+  expect(started.entryPauseSupported).toBe(false);
+  expect(()=>runner.setEntriesPaused(target.botId,started.id,true)).toThrow('controller');
+  await runner.stop(target.botId);
+  expect(()=>runner.setEntriesPaused(target.botId,started.id,true)).toThrow('running');
+});
+
+it('pauses DCA additions but permits risk exits and refuses resume without audit storage', async () => {
+  vi.useFakeTimers(); vi.setSystemTime(new Date('2026-09-06T00:00:00Z'));
+  const {runner,venue}=setup();
+  const flow:FlowDocument={schemaVersion:'3.0',nodes:[
+    {id:'dca',type:'strategy.dca',version:1,config:{quotePerOrder:20,maxNotional:80,takeProfitPercent:10,stopLossPercent:10,maxExtraOrders:2,extraStepPercent:2,repeat:true}},
+    {id:'n',type:'process.number',version:1,config:{value:1}},{id:'yes',type:'condition.compare',version:1,config:{operator:'eq'}},
+  ],edges:[{source:'n',sourcePort:'value',target:'yes',targetPort:'left'},{source:'n',sourcePort:'value',target:'yes',targetPort:'right'},{source:'yes',sourcePort:'result',target:'dca',targetPort:'signal'}]};
+  const started=await runner.start(target.botId,1,flow,target,'testnet',venue);
+  await vi.advanceTimersByTimeAsync(1000);
+  runner.setEntriesPaused(target.botId,started.id,true);
+  let price=97; const original=venue.snapshot;
+  venue.snapshot=async times=>{const value=await original(times);return {...value,context:{...value.context,price}};};
+  await vi.advanceTimersByTimeAsync(59000);
+  expect(venue.place).toHaveBeenCalledOnce();
+  const audit=vi.spyOn(FlowAuditStore.prototype,'append').mockImplementation(()=>{throw new Error('disk unavailable');});
+  expect(()=>runner.setEntriesPaused(target.botId,started.id,false)).toThrow('disk unavailable');
+  expect(runner.get(target.botId)?.entriesPaused).toBe(true);
+  audit.mockRestore(); price=80;
+  await vi.advanceTimersByTimeAsync(5000);
+  expect(venue.place).toHaveBeenCalledTimes(2);
+  expect(vi.mocked(venue.place).mock.calls[1][0]).toMatchObject({reduceOnly:true});
+  await runner.dispose();
+});
+
+it('cancels an unsent entry when paused during preflight and can resume later', async () => {
+  vi.useFakeTimers(); vi.setSystemTime(new Date('2026-09-06T00:00:00Z'));
+  const {runner,venue}=setup();
+  const flow:FlowDocument={schemaVersion:'3.0',nodes:[
+    ...['fast','slow','rsi','atr'].map((id,index)=>({id,type:'process.number',version:1,config:{value:[101,100,65,1][index]}})),
+    {id:'controller',type:'strategy.directional',version:1,config:{quotePerOrder:20}},
+  ],edges:['fast','slow','rsi','atr'].map(id=>({source:id,sourcePort:'value',target:'controller',targetPort:id}))};
+  const original=venue.snapshot; let snapshots=0;
+  venue.snapshot=async times=>{
+    if (++snapshots===3) runner.setEntriesPaused(target.botId,runner.get(target.botId)!.id,true);
+    return original(times);
+  };
+  const started=await runner.start(target.botId,1,flow,target,'testnet',venue);
+  await vi.advanceTimersByTimeAsync(6000);
+  expect(venue.place).not.toHaveBeenCalled();
+  runner.setEntriesPaused(target.botId,started.id,false);
+  await vi.advanceTimersByTimeAsync(54000);
+  expect(venue.place).toHaveBeenCalledOnce();
   await runner.dispose();
 });
 
