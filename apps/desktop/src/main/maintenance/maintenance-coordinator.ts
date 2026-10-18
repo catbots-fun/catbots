@@ -15,7 +15,7 @@ type Dependencies = Readonly<{
   checkpointWal(): WalCheckpoint;
 }>;
 
-type Lease = Readonly<{ operationId: string; reason: 'upgrade' | 'uninstall' }>;
+type Lease = Readonly<{ operationId: string; reason: 'stop' | 'upgrade' | 'uninstall' }>;
 
 export class MaintenanceCoordinator {
   private active: { lease: Lease; checkpoint: WalCheckpoint; release: () => Promise<void> } | undefined;

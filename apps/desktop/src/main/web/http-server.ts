@@ -58,6 +58,14 @@ export async function startWebServer(options: WebTransportOptions) {
         json(response, 401, { error: 'WEB_TICKET_REQUIRED' });
         return;
       }
+      if (options.browserTickets !== undefined) {
+        response.writeHead(303, {
+          Location: '/',
+          'Set-Cookie': `catbots_session=${token}; HttpOnly; SameSite=Strict; Path=/`,
+          'Cache-Control': 'no-store',
+        });
+        response.end(); return;
+      }
       response.setHeader('Set-Cookie', `catbots_session=${token}; HttpOnly; SameSite=Strict; Path=/`);
       json(response, 200, { ready: true }); return;
     }

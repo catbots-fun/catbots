@@ -37,9 +37,10 @@ describe('BrowserTicketStore', () => {
       asset: vi.fn(),
     });
     try {
-      const accepted = await fetch(`${server.origin}/api/session?ticket=${ticket}`);
+      const accepted = await fetch(`${server.origin}/api/session?ticket=${ticket}`, { redirect: 'manual' });
       const replayed = await fetch(`${server.origin}/api/session?ticket=${ticket}`);
-      expect(accepted.status).toBe(200);
+      expect(accepted.status).toBe(303);
+      expect(accepted.headers.get('location')).toBe('/');
       expect(accepted.headers.get('set-cookie')).toContain('HttpOnly');
       expect(replayed.status).toBe(401);
     } finally {

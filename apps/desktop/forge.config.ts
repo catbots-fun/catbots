@@ -50,7 +50,7 @@ const config: ForgeConfig = {
       build: [
         { entry: 'src/main/backtest/flow-backtest-worker.ts', config: 'vite.backtest-worker.config.ts' },
         {
-          entry: 'src/main/main.ts',
+          entry: 'src/main/entrypoint.ts',
           config: 'vite.main.config.ts',
         },
         {

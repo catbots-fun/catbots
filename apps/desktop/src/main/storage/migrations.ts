@@ -198,6 +198,8 @@ const migrations: readonly Migration[] = [
   { version: 7, sql: `ALTER TABLE bots ADD COLUMN deleted_at TEXT;` },
 ];
 
+export const currentDataSchemaVersion = migrations[migrations.length - 1]!.version;
+
 export function migrateDatabase(database: Database.Database): void {
   database.transaction(() => {
     database.exec(`
