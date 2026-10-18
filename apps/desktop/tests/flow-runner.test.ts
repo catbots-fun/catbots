@@ -809,6 +809,44 @@ it.each([false, 'order_outcome', 'protection'] as const)("installs native protec
   await runner.dispose();
 });
 
+it.each([
+  {side:'long',price:98}, {side:'long',price:104},
+  {side:'short',price:102}, {side:'short',price:96},
+])('checks directional $side exits at $price between signal evaluations', async ({side,price:exitPrice}) => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date('2026-09-06T00:00:00Z'));
+  const {runner}=setup();
+  const flow: FlowDocument = {schemaVersion:'3.0',nodes:[
+    ...['fast','slow','rsi','atr'].map((id,index)=>({id,type:'process.number',version:1,config:{value:(side==='long'?[101,100,65,1]:[99,100,35,1])[index]}})),
+    {id:'controller',type:'strategy.directional',version:1,config:{quotePerOrder:15,cooldownMinutes:0}},
+  ],edges:['fast','slow','rsi','atr'].map(id=>({source:id,sourcePort:'value',target:'controller',targetPort:id}))};
+  let price=100, position=0;
+  const orders:OrderPlan[]=[];
+  const venue:FlowVenue={
+    snapshot:async()=>({...structuredClone(snapshot),position,context:{...structuredClone(snapshot.context),price,at:Date.now()}}),
+    place:async plan=>{
+      orders.push(plan);
+      position+=(plan.side==='buy'?1:-1)*plan.quantity;
+      return {id:String(orders.length),clientOrderId:plan.clientOrderId,quantity:plan.quantity,price,side:plan.side,fee:.01};
+    },
+  };
+  await runner.start(target.botId,1,flow,target,'testnet',venue);
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(orders).toHaveLength(1);
+  price=exitPrice;
+  await vi.advanceTimersByTimeAsync(4000);
+  expect(orders).toHaveLength(1);
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(orders).toHaveLength(2);
+  expect(orders[1]).toMatchObject({side:side==='long'?'sell':'buy',reduceOnly:true,quantity:.15});
+  expect(position).toBe(0);
+  await vi.advanceTimersByTimeAsync(10000);
+  expect(orders).toHaveLength(2); // No re-entry from risk checks, even with zero cooldown.
+  expect(runner.get(target.botId)?.status).toBe('running');
+  expect(runner.auditHistory(target.botId).filter(event=>event.kind==='evaluation').map(event=>event.details)).toContainEqual(expect.objectContaining({source:'risk'}));
+  await runner.dispose();
+});
+
 it('allows a single directional controller on Testnet and enforces its quote budget', async () => {
   vi.useFakeTimers();
   vi.setSystemTime(new Date('2026-09-06T00:00:00Z'));
