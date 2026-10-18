@@ -23,7 +23,7 @@ Describe the trade you have in mind. Catbots helps turn it into a visual flow, s
 - **Test before deploying.** Review backtest results, dataset coverage, and execution traces.
 - **Keep your workspace local.** Bots, configuration, and runtime data live on your computer. You choose the AI provider; chat requests go to that provider.
 
-Catbots currently targets **macOS and Hyperliquid perpetual markets**. It is experimental software with Paper and guarded testnet execution. **Mainnet is disabled.**
+Catbots currently targets **macOS and Hyperliquid perpetual markets**. Lighter and Aster adapters are planned but are not supported yet. It is experimental software with Paper and guarded testnet execution. **Mainnet is disabled.**
 
 ## Quick start
 
@@ -112,6 +112,23 @@ Still stuck? [Open an issue](https://github.com/catbots-fun/catbots/issues) with
 A bot belongs to one DEX. Add a symbol condition such as `market.symbol = ETH-PERP` when you want to focus on one market. For screeners, each action stays bound to the market being evaluated.
 
 Read the [dynamic-market guide](docs/dynamic-markets.md) or build a reusable node with the [Community Node SDK](docs/architecture/community-node-sdk.md).
+
+## Roadmap
+
+Each milestone must deliver a workflow that a user can complete. A milestone is not complete when its UI exists. The workflow must also pass its safety, recovery, and release checks.
+
+| Milestone | User outcome | Status |
+| --- | --- | --- |
+| M0 · Local foundation | Create a local profile, connect an AI provider, and keep bot data on the user's computer. | Implemented in source |
+| M1 · AI strategy studio | Describe a strategy in chat, inspect its trigger-condition-action graph, and run a reproducible backtest. | Implemented in source |
+| M2 · Reliable Paper trading | Start and stop a Paper bot, inspect every evaluation and action, and review its performance. | Implemented; reliability validation continues |
+| M3 · Hyperliquid Testnet alpha | Connect a dedicated Agent/API Wallet and test the full order lifecycle with recovery and reconciliation. | In validation |
+| M4 · Public local beta | Install, run, update, and remove the signed macOS app without Node.js or pnpm. Mainnet remains unavailable. | In progress |
+| M5 · Guarded Mainnet | Enable real-money execution only after key custody, risk limits, reconciliation, and recovery pass a separate release review. | Planned |
+| M6 · More perpetual DEX adapters | Add Lighter and Aster through the venue-neutral adapter contract. A bot remains bound to one DEX and can trade any supported perpetual market on that DEX. | Planned |
+| M7 · Data marketplace | Add versioned data providers such as ETF flow with provenance, freshness, permissions, and point-in-time backtest guarantees. | Planned |
+
+Hyperliquid remains the reference adapter. Lighter and Aster must pass the same market discovery, order normalization, idempotency, audit logging, and reconciliation tests before Catbots marks either adapter as supported.
 
 ## Know what you are running
 
