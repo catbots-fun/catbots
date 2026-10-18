@@ -234,6 +234,15 @@ export class ConnectionsService {
   }
   async command(raw: unknown): Promise<ConnectionsView> {
     const input = ConnectionCommandSchema.parse(raw);
+    if (input.action === "get_flow_audit") {
+      const records = this.runner.auditHistory(input.botId, input.after, input.limit + 1);
+      const more = records.length > input.limit;
+      if (more) records.pop();
+      return {
+        ...this.view(),
+        auditPage: { records, ...(more ? { nextAfter: records.at(-1)!.sequence } : {}) },
+      };
+    }
     if (input.action === "bot_overview") {
       const targets=this.readTargets();
       const botOverview:BotExecutionOverview[]=[];

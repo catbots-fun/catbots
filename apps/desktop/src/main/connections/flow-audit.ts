@@ -2,14 +2,8 @@ import Database from 'better-sqlite3';
 import { chmodSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 
-export type FlowAuditEvent = {
-  botId: string;
-  deploymentId: string;
-  version: number;
-  kind: 'evaluation' | 'order_intent' | 'order_outcome' | 'failure';
-  details: unknown;
-};
-export type FlowAuditRecord = FlowAuditEvent & { sequence: number; at: string };
+import type { FlowAuditEvent, FlowAuditRecord } from '@catbots/contracts';
+export type { FlowAuditEvent, FlowAuditRecord } from '@catbots/contracts';
 
 function redact(value: unknown, key = ''): unknown {
   if (/secret|password|authorization|api.?key|private.?key|access.?token|refresh.?token|mnemonic|seed.?phrase/i.test(key)) return '[REDACTED]';

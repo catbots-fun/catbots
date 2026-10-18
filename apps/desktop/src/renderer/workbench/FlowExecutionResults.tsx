@@ -1,4 +1,5 @@
 import { ExecutionLogPanel } from './ExecutionLogPanel';
+import { FlowAuditPanel } from './FlowAuditPanel';
 import { useEffect, useState } from "react";
 import {
   Badge,
@@ -92,6 +93,7 @@ export function FlowExecutionResults({
   return (
     <section className="deploy-panel performance-panel" aria-label={logs ? "Execution logs" : "Trading performance"}>
       <header className="performance-heading"><div><h2>{logs ? "Execution logs" : "Performance"}</h2><p className="backtest-muted">{logs ? 'Inspect execution events and node data.' : 'Track results for each trading run.'}</p></div></header>
+      {logs && <FlowAuditPanel botId={botId} api={api}/>}
       {error && (
         <Banner
           variant="error"
