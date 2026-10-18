@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { runCliCommand, type CliDependencies } from '../src/main/service/cli-command';
+import { formatCliOutcome, runCliCommand, type CliDependencies } from '../src/main/service/cli-command';
 import type { ServiceIdentity } from '../src/main/web/service-identity';
 
 const identity: ServiceIdentity = {
@@ -53,6 +53,16 @@ function fixture(overrides: Partial<CliDependencies> = {}) {
 }
 
 describe('runCliCommand', () => {
+  it('formats user output without exposing a browser ticket', () => {
+    const output = formatCliOutcome({
+      kind: 'opened',
+      url: 'http://127.0.0.1:5180/api/session?ticket=secret-ticket',
+    });
+
+    expect(output).toBe('Opened Catbots in your browser.');
+    expect(output).not.toContain('secret-ticket');
+  });
+
   it('persists running, loads the service, and waits for exact health on start', async () => {
     const value = fixture();
 
@@ -72,6 +82,22 @@ describe('runCliCommand', () => {
     });
 
     await expect(runCliCommand('start', value.dependencies)).rejects.toThrow('SERVICE_IDENTITY_MISMATCH');
+  });
+
+  it('accepts a new owner instance when the installed release identity matches', async () => {
+    const value = fixture({
+      expectedIdentity: undefined,
+      acceptIdentity: (observed) => observed.releaseId === identity.releaseId,
+      health: {
+        current: async () => undefined,
+        waitForReady: async () => ({ ...identity, instanceId: 'fresh-instance' }),
+      },
+    });
+
+    await expect(runCliCommand('start', value.dependencies)).resolves.toMatchObject({
+      kind: 'started',
+      identity: { instanceId: 'fresh-instance' },
+    });
   });
 
   it('returns every maintenance blocker without stopping or persisting stopped', async () => {

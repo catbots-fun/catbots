@@ -2,6 +2,7 @@ import { createServer } from 'node:http';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { startWebServer } from '../src/main/web/http-server';
 import {
+  serviceReleaseMatches,
   serviceIdentityMatches,
   type ServiceIdentity,
 } from '../src/main/web/service-identity';
@@ -76,5 +77,23 @@ describe('web service startup', () => {
     expect(serviceIdentityMatches({ ...identity, protocolVersion: 2 }, identity)).toBe(false);
     expect(serviceIdentityMatches({ ...identity, dataSchemaVersion: 7 }, identity)).toBe(false);
     expect(serviceIdentityMatches({ ...identity, maintenanceOperationId: 'foreign-operation' }, identity)).toBe(false);
+  });
+
+  it('accepts a fresh instance only when the installed release identity matches', () => {
+    const expected = {
+      product: 'catbots' as const,
+      bundleId: 'com.catbots.desktop' as const,
+      releaseId: identity.releaseId,
+      version: identity.version,
+      commit: identity.commit,
+      architecture: identity.architecture,
+      protocolVersion: identity.protocolVersion,
+      dataSchemaVersion: identity.dataSchemaVersion,
+      resumePolicy: 'manual-only' as const,
+    };
+
+    expect(serviceReleaseMatches({ ...identity, instanceId: 'fresh-instance' }, expected)).toBe(true);
+    expect(serviceReleaseMatches({ ...identity, releaseId: 'foreign-release' }, expected)).toBe(false);
+    expect(serviceReleaseMatches({ ...identity, instanceId: '' }, expected)).toBe(false);
   });
 });

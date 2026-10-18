@@ -40,7 +40,8 @@ export type CliDependencies = Readonly<{
     current(): Promise<ServiceIdentity | undefined>;
     waitForReady(): Promise<ServiceIdentity>;
   };
-  expectedIdentity: ServiceIdentity;
+  expectedIdentity?: ServiceIdentity;
+  acceptIdentity?: (identity: ServiceIdentity) => boolean;
   openExternal(url: string): Promise<void>;
   operationId(): string;
   origin: string;
@@ -56,11 +57,23 @@ export async function runCliCommand(
   return open(dependencies);
 }
 
+export function formatCliOutcome(outcome: CliOutcome): string {
+  if (outcome.kind === 'opened') return 'Opened Catbots in your browser.';
+  if (outcome.kind === 'started') return 'Catbots is running at http://127.0.0.1:5180.';
+  if (outcome.kind === 'stopped') return 'Catbots is stopped.';
+  if (outcome.kind === 'blocked') return `Catbots could not stop safely. ${outcome.action}`;
+  const release = outcome.identity === undefined
+    ? ''
+    : ` Release ${outcome.identity.releaseId}.`;
+  const action = outcome.action === undefined ? '' : ` ${outcome.action}`;
+  return `Catbots is ${outcome.observed}; desired state is ${outcome.desired}.${release}${action}`;
+}
+
 async function start(dependencies: CliDependencies): Promise<CliOutcome> {
   await dependencies.desiredState.write('running');
   await dependencies.launchAgent.start();
   const identity = await dependencies.health.waitForReady();
-  assertExpectedIdentity(identity, dependencies.expectedIdentity);
+  assertExpectedIdentity(identity, dependencies);
   return { kind: 'started', identity };
 }
 
@@ -89,7 +102,7 @@ async function stop(dependencies: CliDependencies): Promise<CliOutcome> {
 async function open(dependencies: CliDependencies): Promise<CliOutcome> {
   const observed = await dependencies.health.current();
   if (observed === undefined) await start(dependencies);
-  else assertExpectedIdentity(observed, dependencies.expectedIdentity);
+  else assertExpectedIdentity(observed, dependencies);
 
   const ticket = parseTicket(await dependencies.control.execute({ kind: 'mint-browser-ticket' }));
   const url = `${dependencies.origin}/api/session?ticket=${encodeURIComponent(ticket)}`;
@@ -104,7 +117,7 @@ async function status(dependencies: CliDependencies): Promise<CliOutcome> {
     dependencies.health.current(),
   ]);
   if (identity !== undefined) {
-    assertExpectedIdentity(identity, dependencies.expectedIdentity);
+    assertExpectedIdentity(identity, dependencies);
     return {
       kind: 'status',
       desired,
@@ -127,8 +140,11 @@ async function status(dependencies: CliDependencies): Promise<CliOutcome> {
   };
 }
 
-function assertExpectedIdentity(observed: ServiceIdentity, expected: ServiceIdentity): void {
-  if (!serviceIdentityMatches(observed, expected) || observed.readiness !== 'ready') {
+function assertExpectedIdentity(observed: ServiceIdentity, dependencies: CliDependencies): void {
+  const accepted = dependencies.acceptIdentity?.(observed)
+    ?? (dependencies.expectedIdentity !== undefined
+      && serviceIdentityMatches(observed, dependencies.expectedIdentity));
+  if (!accepted || observed.readiness !== 'ready') {
     throw new Error('SERVICE_IDENTITY_MISMATCH');
   }
 }

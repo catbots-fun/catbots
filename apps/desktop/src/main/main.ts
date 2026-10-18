@@ -31,12 +31,18 @@ import { ApplicationDatabase } from './storage/database';
 import { createTray, type TrayController } from './tray/create-tray';
 import { WorkbenchRepository } from './workbench/workbench-repository';
 import { WorkbenchService } from './workbench/workbench-service';
+import { createStaticAssetCatalog } from './web/static-assets';
+import { startServiceHost } from './service/service-host';
+import { createServiceIdentity, createServiceReleaseIdentity } from './service/runtime-identity';
+import { currentDataSchemaVersion } from './storage/migrations';
+import { MaintenanceCoordinator } from './maintenance/maintenance-coordinator';
 
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
 declare const MAIN_WINDOW_VITE_NAME: string;
 
 const appOrigin = 'catbots://app';
-const ownsApplicationInstance = app.requestSingleInstanceLock();
+const ownsApplicationInstance = process.env.CATBOTS_INSTANCE_LOCK_ACQUIRED === '1'
+  || app.requestSingleInstanceLock();
 let database!: ApplicationDatabase;
 let runtime!: RuntimeSupervisor;
 if (ownsApplicationInstance) {
@@ -57,6 +63,8 @@ let quitting = false;
 let disposeNodeBacktests: (() => void) | undefined;
 let e2eQuitResponse: number | undefined;
 let startupPhase = 'waiting-for-electron';
+let serviceReadiness: 'starting' | 'ready' | 'maintenance' | 'repair' = 'starting';
+let maintenanceOperationId: string | undefined;
 
 app.enableSandbox();
 
@@ -165,12 +173,76 @@ if (ownsApplicationInstance) void app.whenReady()
     };
     disposeFlowConnections = () => serviceDependencies.connections!.dispose();
     disposeIpcHandlers = registerIpcHandlers(serviceDependencies);
-    if (process.env.CATBOTS_WEB === '1' && !app.isPackaged) {
-      if (!MAIN_WINDOW_VITE_DEV_SERVER_URL) throw new Error('WEB_DEV_SERVER_REQUIRED');
+    if (process.env.CATBOTS_WEB === '1') {
+      const releaseIdentity = createServiceReleaseIdentity({
+        version: app.getVersion(),
+        commit: process.env.CATBOTS_RELEASE_COMMIT ?? 'development',
+        architecture: process.arch,
+        dataSchemaVersion: currentDataSchemaVersion,
+      });
+      const instanceId = randomUUID();
+      const maintenance = new MaintenanceCoordinator({
+        blockNewWork: async (operationId) => {
+          maintenanceOperationId = operationId;
+          serviceReadiness = 'maintenance';
+          return async () => {
+            maintenanceOperationId = undefined;
+            serviceReadiness = 'ready';
+          };
+        },
+        inspect: async () => {
+          const deployments = connection.prepare(`
+            SELECT id, mode FROM deployments
+            WHERE status IN ('preflight', 'running', 'paused', 'stopping', 'recovering', 'suspended', 'error')
+            ORDER BY created_at
+          `).all().map((row) => {
+            const value = row as { id: unknown; mode: unknown };
+            if (typeof value.id !== 'string' || (value.mode !== 'paper' && value.mode !== 'live')) {
+              throw new Error('MAINTENANCE_DEPLOYMENT_INVALID');
+            }
+            return { id: value.id, mode: value.mode } as const;
+          });
+          const unsettled = connection.prepare(`
+            SELECT client_order_id, status FROM execution_outbox
+            WHERE status IN ('pending', 'claimed', 'unknown')
+            ORDER BY created_at
+          `).all() as Array<{ client_order_id: unknown; status: unknown }>;
+          return {
+            deployments,
+            inFlightOrderIds: unsettled
+              .filter(({ status }) => status !== 'unknown')
+              .map(({ client_order_id }) => String(client_order_id)),
+            unknownOrderIds: unsettled
+              .filter(({ status }) => status === 'unknown')
+              .map(({ client_order_id }) => String(client_order_id)),
+            databaseRepairRequired: false,
+            runtime: runtime.getStatus(),
+          };
+        },
+        stopRuntime: () => runtime.stop(),
+        checkpointWal: () => database.checkpointWal(),
+      });
       const application = createApplicationHandlers(serviceDependencies);
-      webServer = await startWebServer({
+      const packagedAssets = app.isPackaged
+        ? await createStaticAssetCatalog(join(__dirname, '../renderer/main_window'))
+        : undefined;
+      if (!app.isPackaged && !MAIN_WINDOW_VITE_DEV_SERVER_URL) throw new Error('WEB_DEV_SERVER_REQUIRED');
+      webServer = await startServiceHost({
         port: 5180,
+        socketPath: join(dataDirectory, 'control', 'catbots.sock'),
+        identity: () => createServiceIdentity(
+          releaseIdentity,
+          instanceId,
+          serviceReadiness,
+          maintenanceOperationId,
+        ),
+        maintenance,
+        shutdown: async (leaseId) => {
+          if (maintenance.current()?.operationId !== leaseId) throw new Error('MAINTENANCE_LEASE_MISMATCH');
+          setTimeout(() => { void quitApplication(); }, 25);
+        },
         invoke: async (method, input) => {
+          if (maintenance.current() !== undefined) throw new IpcRequestError('MAINTENANCE_ACTIVE');
           if (!Object.hasOwn(webMethods, method)) throw new IpcRequestError('UNKNOWN_METHOD');
           const name = webMethods[method as keyof typeof webMethods];
           return (application[name] as (input?: unknown) => Promise<unknown>)(input);
@@ -187,6 +259,7 @@ if (ownsApplicationInstance) void app.whenReady()
           return () => { runtimeSubscription(); activitySubscription(); };
         },
         asset: async (path) => {
+          if (packagedAssets !== undefined) return packagedAssets.resolve(path);
           const target = new URL(path, MAIN_WINDOW_VITE_DEV_SERVER_URL);
           if (target.origin !== new URL(MAIN_WINDOW_VITE_DEV_SERVER_URL!).origin) throw new Error('INVALID_ASSET');
           const response = await net.fetch(target.href, { cache: 'no-store' });
@@ -194,6 +267,7 @@ if (ownsApplicationInstance) void app.whenReady()
           return { body: new Uint8Array(await response.arrayBuffer()), contentType: response.headers.get('content-type') ?? 'application/octet-stream' };
         },
       });
+      serviceReadiness = 'ready';
       console.log(`Catbots web: ${webServer.origin} (real local backend)`);
     }
     startupPhase = 'tray';
