@@ -98,6 +98,16 @@ export function ExecutionTargetPanel({
   }, [api, botId]);
   const running =
     deployment?.status === "running" || deployment?.status === "stopping";
+  const toggleEntries = async () => {
+    if (!api || !deployment) return;
+    setBusy(true); setError('');
+    try {
+      const next = await api.command({ action: 'set_flow_entries_paused', botId, deploymentId: deployment.id, paused: !deployment.entriesPaused });
+      setDeployment(next.deployment);
+    } catch {
+      setError('Could not change entry controls. Refresh runtime status before retrying.');
+    } finally { setBusy(false); }
+  };
   const runtime = async (start: boolean) => {
     if (!api || (start && !version)) return;
     setBusy(true);
@@ -156,15 +166,21 @@ export function ExecutionTargetPanel({
             </Badge>{" "}
             Flow v{deployment.version} · {deployment.environment === "testnet" ? "Testnet" : "Mainnet"} ·{" "}
             {deployment.target.market}
+          {deployment.entryPauseSupported && <Button
+            size="base" variant="secondary" disabled={busy || deployment.status !== 'running'}
+            onClick={() => void toggleEntries()}
+          >{deployment.entriesPaused ? 'Resume entries' : 'Pause entries'}</Button>}
           <Button
             size="base"
             variant="secondary"
-            disabled={busy || !running}
+            disabled={busy || deployment.status !== 'running'}
             onClick={() => void runtime(false)}
           >
-            Stop bot
+            Stop runtime
           </Button>
           </div>
+          {deployment.entriesPaused && <p role="status">Entries paused. Risk checks and exits continue while the runtime is running. Orders already submitted still await their outcome.</p>}
+          <p className="backtest-muted">Stop runtime stops local checks; it does not close positions or cancel exchange protection.</p>
           <dl className="deploy-stats">
             <div><dt>Evaluations</dt><dd>{deployment.cycles}</dd></div>
             <div><dt>Orders this run</dt><dd>{deployment.orders.length}</dd></div>

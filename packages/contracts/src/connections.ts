@@ -69,6 +69,7 @@ export const ConnectionCommandSchema = z.discriminatedUnion("action", [
     through: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
   }).strict(),
   z.object({ action: z.literal("list") }).strict(),
+  z.object({ action: z.literal('set_flow_entries_paused'), botId: z.string().uuid(), deploymentId: z.string().uuid(), paused: z.boolean() }).strict(),
   z.object({ action: z.literal("bot_overview"), botIds: z.array(z.string().uuid()).max(100) }).strict(),
   z
     .object({
@@ -140,6 +141,8 @@ export type FlowDeployment = {
   lastRunAt?: string;
   error?: string;
   auditWarning?: string;
+  entriesPaused?: boolean;
+  entryPauseSupported?: boolean;
   cycles: number;
   orders: {
     id: string;

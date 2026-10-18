@@ -234,6 +234,7 @@ export class ConnectionsService {
   }
   async command(raw: unknown): Promise<ConnectionsView> {
     const input = ConnectionCommandSchema.parse(raw);
+    if (input.action === 'set_flow_entries_paused') return { ...this.view(), deployment: this.runner.setEntriesPaused(input.botId, input.deploymentId, input.paused) };
     if (input.action === 'get_flow_audit_summary') return { ...this.view(), auditSummary: this.runner.auditSummary(input.botId) };
     if (input.action === "get_flow_audit") {
       const records = this.runner.auditHistory(input.botId, input.after, input.limit + 1, input.through);
