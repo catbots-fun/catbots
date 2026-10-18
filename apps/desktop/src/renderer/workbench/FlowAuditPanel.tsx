@@ -4,6 +4,7 @@ import type { CatbotsDesktopApi, FlowAuditPage, FlowAuditRecord } from '@catbots
 
 const labels: Record<FlowAuditRecord['kind'], string> = {
   evaluation: 'Evaluation', order_intent: 'Order intent', order_outcome: 'Order outcome', failure: 'Failure',
+  lifecycle: 'Lifecycle', reconciliation: 'Reconciliation', protection: 'Protection',
 };
 
 function AuditEntry({ record }: { record: FlowAuditRecord }) {

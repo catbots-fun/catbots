@@ -137,6 +137,7 @@ export type FlowDeployment = {
   startedAt: string;
   lastRunAt?: string;
   error?: string;
+  auditWarning?: string;
   cycles: number;
   orders: {
     id: string;
@@ -182,7 +183,7 @@ export type FlowAuditEvent = {
   botId: string;
   deploymentId: string;
   version: number;
-  kind: 'evaluation' | 'order_intent' | 'order_outcome' | 'failure';
+  kind: 'evaluation' | 'order_intent' | 'order_outcome' | 'failure' | 'lifecycle' | 'reconciliation' | 'protection';
   details: unknown;
 };
 export type FlowAuditRecord = FlowAuditEvent & { sequence: number; at: string };
