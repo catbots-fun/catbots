@@ -51,6 +51,10 @@ export async function startWebServer(options: WebTransportOptions) {
       return;
     }
     if (requestUrl.pathname === '/api/session' && request.method === 'GET') {
+      if (hasSession(request)) {
+        json(response, 200, { ready: true });
+        return;
+      }
       const authorized = options.browserTickets === undefined
         ? request.headers['x-catbots-client'] === '1'
         : options.browserTickets.consume(requestUrl.searchParams.get('ticket') ?? '');

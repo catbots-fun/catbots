@@ -9,6 +9,16 @@ import { WorkbenchService } from '../src/main/workbench/workbench-service';
 
 const runAgainstLocalModel = process.env.CATBOTS_LMSTUDIO_E2E === '1' ? describe : describe.skip;
 
+async function resolveModel(baseUrl: string): Promise<string> {
+  if (process.env.CATBOTS_LMSTUDIO_MODEL) return process.env.CATBOTS_LMSTUDIO_MODEL;
+  const response = await fetch(`${baseUrl.replace(/\/$/, '')}/models`);
+  if (!response.ok) throw new Error('LM Studio model discovery failed');
+  const payload = await response.json() as { data?: Array<{ id?: unknown }> };
+  const model = payload.data?.find(({ id }) => typeof id === 'string')?.id;
+  if (typeof model !== 'string') throw new Error('LM Studio has no loaded model');
+  return model;
+}
+
 runAgainstLocalModel('LM Studio workbench', () => {
   const databases: ReturnType<typeof openDatabase>[] = [];
 
@@ -25,6 +35,7 @@ runAgainstLocalModel('LM Studio workbench', () => {
       market: 'BTC-PERP',
     });
     const repository = new WorkbenchRepository(database);
+    const baseUrl = process.env.CATBOTS_LMSTUDIO_URL ?? 'http://127.0.0.1:1234/v1';
     const service = new WorkbenchService({
       repository,
       configRepository: {
@@ -32,9 +43,9 @@ runAgainstLocalModel('LM Studio workbench', () => {
           profile: { name: 'LM Studio E2E', telemetry: false },
           llm: {
             provider: 'openai-compatible' as const,
-            baseUrl: process.env.CATBOTS_LMSTUDIO_URL ?? 'http://127.0.0.1:1234/v1',
+            baseUrl,
             apiKey: 'lm-studio',
-            model: process.env.CATBOTS_LMSTUDIO_MODEL ?? 'qwen/qwen3.8-27b',
+            model: await resolveModel(baseUrl),
             reasoningEffort: 'none' as const,
           },
           exchanges: {},

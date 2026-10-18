@@ -47,4 +47,28 @@ describe('BrowserTicketStore', () => {
       await server.close();
     }
   });
+
+  it('accepts the session check that the browser entry performs after a ticket redirect', async () => {
+    const tickets = new BrowserTicketStore();
+    const server = await startWebServer({
+      port: 0,
+      browserTickets: tickets,
+      invoke: vi.fn(),
+      subscribe: () => () => undefined,
+      asset: vi.fn(),
+    });
+    try {
+      const ticket = tickets.issue(30_000);
+      const exchanged = await fetch(`${server.origin}/api/session?ticket=${ticket}`, { redirect: 'manual' });
+      const cookie = exchanged.headers.get('set-cookie')!.split(';')[0];
+      const checked = await fetch(`${server.origin}/api/session`, {
+        headers: { cookie, 'x-catbots-client': '1' },
+      });
+
+      expect(checked.status).toBe(200);
+      await expect(checked.json()).resolves.toEqual({ ready: true });
+    } finally {
+      await server.close();
+    }
+  });
 });

@@ -28,7 +28,10 @@ void runRuntimeEntrypoint({
     ownerStarted = true;
     process.env.CATBOTS_INSTANCE_LOCK_ACQUIRED = '1';
     process.env.CATBOTS_WEB = '1';
-    process.env.CATBOTS_WEB_ONLY = '1';
+    const nativeE2E = process.env.NODE_ENV === 'test'
+      && process.env.CATBOTS_E2E_NATIVE === '1'
+      && process.env.CATBOTS_E2E_DATA_DIR !== undefined;
+    process.env.CATBOTS_WEB_ONLY = nativeE2E ? '0' : '1';
     await import('./main');
     return { close: async () => undefined };
   },
