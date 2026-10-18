@@ -28,7 +28,11 @@ const config: ForgeConfig = {
     appCategoryType: 'public.app-category.finance',
     icon: 'assets/icon.icns',
     asar: true,
-    extraResource: ['assets/trayTemplate.png'],
+    extraResource: [
+      'assets/trayTemplate.png',
+      'assets/catbots',
+      'assets/fun.catbots.web.plist.template',
+    ],
     // Keep only Vite output in the app bundle. This also excludes local configuration and planning artifacts.
     ignore: (file: string) => {
       // Electron Packager asks about the project root with an empty path; it must never be ignored.

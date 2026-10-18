@@ -56,6 +56,15 @@ export async function verifyRequiredEntries(artifactDirectory, requiredEntries) 
   }
 }
 
+export async function verifyProductionPackage(artifactDirectory) {
+  await verifyPackageContents(artifactDirectory);
+  await verifyRequiredEntries(artifactDirectory, [
+    { kind: 'exact', path: '.vite/renderer/main_window/web.html' },
+    { kind: 'exact', path: 'Resources/catbots' },
+    { kind: 'exact', path: 'Resources/fun.catbots.web.plist.template' },
+  ]);
+}
+
 async function collectPackagedEntries(directory, displayRoot) {
   const entries = [];
   for (const entry of await readdir(directory, { withFileTypes: true })) {
@@ -104,8 +113,5 @@ async function inspectZip(zipPath, displayRoot) {
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const artifactDirectory = process.argv[2];
   if (artifactDirectory === undefined) throw new Error('Usage: verify-package-contents.mjs <artifact-directory>');
-  await verifyPackageContents(artifactDirectory);
-  await verifyRequiredEntries(artifactDirectory, [
-    { kind: 'exact', path: '.vite/renderer/main_window/web.html' },
-  ]);
+  await verifyProductionPackage(artifactDirectory);
 }

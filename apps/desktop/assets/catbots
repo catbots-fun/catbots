@@ -1,0 +1,4 @@
+#!/bin/sh
+set -eu
+
+exec "$HOME/Applications/Catbots.app/Contents/MacOS/Catbots" --cli "$@"

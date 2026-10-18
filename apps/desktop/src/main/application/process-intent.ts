@@ -3,6 +3,11 @@ export type ControlCommand =
   | { readonly kind: 'mint-browser-ticket' }
   | {
       readonly kind: 'prepare-maintenance';
+      readonly reason: 'stop';
+      readonly operationId: string;
+    }
+  | {
+      readonly kind: 'prepare-maintenance';
       readonly reason: 'upgrade';
       readonly targetRelease: string;
     }
@@ -16,9 +21,12 @@ export type InstallerCommand =
   | { readonly kind: 'reconcile'; readonly requestFile: string }
   | { readonly kind: 'uninstall'; readonly purgeData: boolean };
 
+export type CliCommand = 'open' | 'status' | 'start' | 'stop';
+
 export type ProcessIntent =
   | { readonly kind: 'serve-web'; readonly window: 'never'; readonly port: 5180 }
   | { readonly kind: 'open-ui' }
+  | { readonly kind: 'cli'; readonly command: CliCommand }
   | { readonly kind: 'control'; readonly command: ControlCommand }
   | { readonly kind: 'installer'; readonly command: InstallerCommand };
 
@@ -54,6 +62,10 @@ export function parseProcessIntent(
     return { kind: 'serve-web', window: 'never', port: 5180 };
   }
 
+  if (args.length === 2 && args[0] === '--cli' && isCliCommand(args[1])) {
+    return { kind: 'cli', command: args[1] };
+  }
+
   if (args[0] === '--control') {
     return {
       kind: 'control',
@@ -70,6 +82,10 @@ export function parseProcessIntent(
   }
 
   return invalid();
+}
+
+function isCliCommand(value: string | undefined): value is CliCommand {
+  return value === 'open' || value === 'status' || value === 'start' || value === 'stop';
 }
 
 function parseControlCommand(args: readonly string[]): ControlCommand {

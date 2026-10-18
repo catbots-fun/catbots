@@ -1,6 +1,7 @@
 export function isForbidden(path: string): boolean;
 export function findForbiddenEntries(directory: string, displayRoot: string): Promise<string[]>;
 export function verifyPackageContents(artifactDirectory: string): Promise<void>;
+export function verifyProductionPackage(artifactDirectory: string): Promise<void>;
 export function verifyRequiredEntries(
   artifactDirectory: string,
   requiredEntries: readonly (
