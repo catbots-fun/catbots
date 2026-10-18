@@ -161,6 +161,16 @@ git diff --check
 
 The E2E suite packages Electron and manages native module rebuilding. Stop separate Electron development processes before running it.
 
+To run the final acceptance test against an OpenAI-compatible or Anthropic-compatible endpoint, provide the values through the process environment. The test does not save the key or print it in its failure summary.
+
+```sh
+CATBOTS_PROVIDER_KIND=openai-compatible \
+CATBOTS_PROVIDER_URL=https://provider.example/v1 \
+CATBOTS_PROVIDER_API_KEY=your-key \
+CATBOTS_PROVIDER_MODEL=provider/model \
+pnpm test:provider
+```
+
 ### Source and license
 
 Catbots is built in the open. **An open-source license has not yet been selected**, so reuse permissions are not granted automatically. See the source, try the workflow, and join the discussion as the project develops.
