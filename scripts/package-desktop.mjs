@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { assertReleaseEnvironment } from './check-release-node.mjs';
+import { assertReleaseTrustFile } from './check-release-trust.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const desktop = resolve(root, 'apps/desktop');
@@ -126,6 +127,12 @@ export function restoreProcessOptions(platform = process.platform) {
 const nativePath = resolve(root, 'node_modules/better-sqlite3');
 export async function runDesktopCommand(command, options = {}) {
   const runCommand = options.run ?? run;
+  if (command === 'package' || command === 'make') {
+    await (options.assertTrust ?? assertReleaseTrustFile)(
+      process.env.CATBOTS_RELEASE_TRUST_FILE,
+      process.env.CATBOTS_RELEASE_TRUST_FINGERPRINT,
+    );
+  }
   await runPackaging({
     rebuildElectron: (onSpawn) => runCommand(resolve(root, 'node_modules/.bin/electron-rebuild'), ['-f', '-w', 'better-sqlite3'], desktop, onSpawn),
     forge: (onSpawn) => runCommand(resolve(root, 'node_modules/.bin/electron-forge'), [command], desktop, onSpawn),

@@ -41,6 +41,7 @@ function platform(overrides: Partial<Parameters<typeof verifyRelease>[1]> = {}) 
       teamId: 'CATB0TTEAM',
       architectures: ['arm64'] as const,
       codeSignatureValid: true,
+      hardenedRuntime: true,
       gatekeeperAccepted: true,
       notarized: true,
     })),
@@ -62,6 +63,18 @@ describe('release verifier', () => {
     }, platform());
 
     expect(verified).toMatchObject({ releaseId: '0.2.0+abc123', version: '0.2.0', architecture: 'arm64' });
+  });
+
+  it('accepts the RSA-SHA256 detached signature used by the public bootstrap', async () => {
+    const bytes = Buffer.from(JSON.stringify(manifest));
+    const keys = generateKeyPairSync('rsa', { modulusLength: 2048 });
+    await expect(verifyRelease({
+      manifestBytes: bytes,
+      signatureBytes: sign('sha256', bytes, keys.privateKey),
+      trustedPublicKeys: [keys.publicKey.export({ type: 'spki', format: 'pem' }).toString()],
+      architecture: 'arm64', archiveBytes: archive, finalArtifactUrl: artifact.url,
+      stagedAppPath: '/private/tmp/Catbots.app', currentMacOS: '14.0', pinnedTeamId: 'CATB0TTEAM',
+    }, platform())).resolves.toMatchObject({ releaseId: manifest.releaseId });
   });
 
   it('rejects a changed signature, digest, size, redirect host, and downgrade', async () => {
@@ -106,6 +119,7 @@ describe('release verifier', () => {
       ['teamId', 'RELEASE_TEAM_ID_MISMATCH'],
       ['architectures', 'RELEASE_ARCHITECTURE_MISMATCH'],
       ['codeSignatureValid', 'RELEASE_CODE_SIGNATURE_INVALID'],
+      ['hardenedRuntime', 'RELEASE_HARDENED_RUNTIME_MISSING'],
       ['gatekeeperAccepted', 'RELEASE_GATEKEEPER_REJECTED'],
       ['notarized', 'RELEASE_NOTARIZATION_MISSING'],
     ] as const) {
@@ -114,6 +128,7 @@ describe('release verifier', () => {
         teamId: 'CATB0TTEAM',
         architectures: ['arm64'] as readonly ('arm64' | 'x64')[],
         codeSignatureValid: true,
+        hardenedRuntime: true,
         gatekeeperAccepted: true,
         notarized: true,
       };

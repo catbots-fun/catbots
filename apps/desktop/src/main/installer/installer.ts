@@ -7,6 +7,8 @@ import {
 import { recoverInterruptedInstall, type InstallerRecoveryResult } from './recovery';
 import type { InstallerCommand } from '../application/process-intent';
 import type { UninstallOutcome } from './uninstall';
+import type { CanonicalServiceObservation } from './install-transaction';
+import type { ServiceIdentity } from '../web/service-identity';
 import { z } from 'zod';
 
 export type CatbotsInstaller = Readonly<{
@@ -19,6 +21,9 @@ export type InstallerDependencies = Readonly<{
     read(requestFile: string): Promise<unknown>;
   };
   transactionDependencies: InstallerTransactionDependencies;
+  verifyRequest?(request: BootstrapInstallRequest): Promise<void>;
+  deriveInput(request: BootstrapInstallRequest): Promise<InstallTransactionInput>;
+  canonicalHealth?: () => Promise<CanonicalServiceObservation>;
   recover?: (dependencies: InstallerTransactionDependencies) => Promise<InstallerRecoveryResult>;
   transact?: (
     input: InstallTransactionInput,
@@ -28,39 +33,25 @@ export type InstallerDependencies = Readonly<{
 }>;
 
 const requestSchema = z.strictObject({
-  operationId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{2,127}$/),
-  desiredReleaseId: z.string().min(1).max(160),
-  previousInstallation: z.discriminatedUnion('kind', [
-    z.strictObject({ kind: z.literal('absent') }),
-    z.strictObject({
-      kind: z.literal('installed'),
-      releaseId: z.string().min(1).max(160),
-      desiredService: z.enum(['running', 'stopped']),
-    }),
-  ]),
-  desiredService: z.enum(['running', 'stopped']),
-  preserveData: z.boolean(),
-  requiredSnapshotBytes: z.number().int().nonnegative(),
-  paths: z.strictObject({
-    home: z.string().startsWith('/'),
-    application: z.string().startsWith('/'),
-    command: z.string().startsWith('/'),
-    launchAgent: z.string().startsWith('/'),
-    installerState: z.string().startsWith('/'),
-    productData: z.string().startsWith('/'),
-  }),
+  schemaVersion: z.literal(1),
+  manifestPath: z.string().startsWith('/'),
+  signaturePath: z.string().startsWith('/'),
+  archivePath: z.string().startsWith('/'),
+  effectiveArtifactUrl: z.string().url().startsWith('https://'),
 });
+export type BootstrapInstallRequest = z.infer<typeof requestSchema>;
 
 export function createInstaller(dependencies: InstallerDependencies): CatbotsInstaller {
   const recover = dependencies.recover ?? recoverInterruptedInstall;
   const transact = dependencies.transact ?? executeInstallTransaction;
   return Object.freeze({
     reconcile: async (requestFile) => {
-      await recover(dependencies.transactionDependencies);
       const parsed = requestSchema.safeParse(await dependencies.requests.read(requestFile));
       if (!parsed.success) throw new Error('INSTALL_REQUEST_INVALID');
-      const request: InstallTransactionInput = parsed.data;
-      return transact(request, dependencies.transactionDependencies);
+      await dependencies.verifyRequest?.(parsed.data);
+      await recover(dependencies.transactionDependencies);
+      const input = await dependencies.deriveInput(parsed.data);
+      return transact(input, dependencies.transactionDependencies);
     },
     uninstall: async (purgeData) => {
       if (dependencies.uninstall === undefined) throw new Error('UNINSTALL_PLATFORM_UNAVAILABLE');
@@ -83,6 +74,7 @@ export function createProductionInstallerCommandRunner(
     loadDependencies?(): Promise<InstallerDependencies>;
     uninstall?(purgeData: boolean): Promise<UninstallOutcome>;
     reportUninstall?(outcome: UninstallOutcome): void;
+    reportInstall?(outcome: InstallTransactionResult & Readonly<{ health: CanonicalServiceObservation }>): void;
   }>,
 ): (command: InstallerCommand) => Promise<number> {
   return async (command) => {
@@ -93,7 +85,20 @@ export function createProductionInstallerCommandRunner(
       return outcome.kind === 'blocked' ? 2 : 0;
     }
     if (platform?.loadDependencies === undefined) throw new Error('INSTALLER_PLATFORM_UNAVAILABLE');
-    return createInstallerCommandRunner({ loadDependencies: platform.loadDependencies })(command);
+    const dependencies = await platform.loadDependencies();
+    const outcome = await createInstaller(dependencies).reconcile(command.requestFile);
+    if (dependencies.canonicalHealth === undefined) throw new Error('INSTALLER_HEALTH_PLATFORM_UNAVAILABLE');
+    const health = await dependencies.canonicalHealth();
+    if ('state' in health) {
+      if (Object.keys(health).sort().join(',') !== 'bundleId,product,state'
+        || health.product !== 'catbots' || health.bundleId !== 'com.catbots.desktop' || health.state !== 'stopped') {
+        throw new Error('CANONICAL_STOPPED_STATE_MISMATCH');
+      }
+    } else if (health.readiness !== 'ready' || health.releaseId !== outcome.releaseId) {
+      throw new Error('CANONICAL_HEALTH_IDENTITY_MISMATCH');
+    }
+    platform.reportInstall?.({ ...outcome, health });
+    return 0;
   };
 }
 

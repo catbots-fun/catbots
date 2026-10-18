@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { recoverInterruptedInstall } from '../src/main/installer/recovery';
+import { acquireCurrentMaintenance } from '../src/main/installer/production-installer';
 import type { InstallJournal, ManagedPaths, PreviousInstallationState } from '../src/main/installer/types';
 
 const paths: ManagedPaths = {
@@ -85,6 +86,7 @@ function fixture(phase: InstallJournal['phase'], previousInstallation?: Previous
       launchAgent: {
         install: async () => undefined,
         rollback: async () => { events.push('launch-agent:rollback'); },
+        commit: async () => { events.push('launch-agent:commit'); },
       },
       candidate: {
         start: async () => { events.push('candidate:start'); },
@@ -109,6 +111,32 @@ function fixture(phase: InstallJournal['phase'], previousInstallation?: Previous
 }
 
 describe('installer recovery', () => {
+  it('passes the interrupted journal release to the production maintenance closure', async () => {
+    const f = fixture('candidate-verifying');
+    let targetRelease: string | undefined;
+    const dependencies = {
+      ...f.dependencies,
+      maintenance: {
+        ...f.dependencies.maintenance,
+        acquire: async (request: { operationId: string; reason: 'upgrade'; desiredReleaseId: string }) => {
+          targetRelease = request.desiredReleaseId;
+          return acquireCurrentMaintenance({
+            operationId: request.operationId,
+            releaseId: request.desiredReleaseId,
+            socketPath: '/private/control.sock',
+            health: { current: async () => undefined },
+            createControl: () => { throw new Error('must not create control without a current service'); },
+            stopLaunchAgent: async () => undefined,
+            waitForStopped: async () => undefined,
+          });
+        },
+      },
+    };
+
+    await expect(recoverInterruptedInstall(dependencies)).resolves.toMatchObject({ kind: 'rolled-back' });
+    expect(targetRelease).toBe('0.2.0+abc123');
+  });
+
   it('discards an interrupted staged release without stopping the live runtime', async () => {
     const f = fixture('prepared');
 
@@ -249,11 +277,26 @@ describe('installer recovery', () => {
     });
 
     expect(f.events).toEqual([
-      'maintenance:acquire',
       'maintenance:commit',
+      'launch-agent:commit',
       'application:commit',
       'journal:complete',
       'lock:release',
     ]);
+  });
+
+  it('preserves the committed running service when later new-request derivation fails', async () => {
+    const f = fixture('committed');
+    let serviceRunning = true;
+    f.dependencies.maintenance.acquire = async () => {
+      serviceRunning = false;
+      return { operationId: 'operation-1' };
+    };
+
+    await expect((async () => {
+      await recoverInterruptedInstall(f.dependencies);
+      throw new Error('POST_RECOVERY_DERIVE_FAILED');
+    })()).rejects.toThrow('POST_RECOVERY_DERIVE_FAILED');
+    expect(serviceRunning).toBe(true);
   });
 });

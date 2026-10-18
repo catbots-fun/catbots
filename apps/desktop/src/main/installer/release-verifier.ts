@@ -49,6 +49,7 @@ export type ApplicationInspection = Readonly<{
   teamId: string;
   architectures: readonly ReleaseArchitecture[];
   codeSignatureValid: boolean;
+  hardenedRuntime: boolean;
   gatekeeperAccepted: boolean;
   notarized: boolean;
 }>;
@@ -92,6 +93,7 @@ export async function verifyRelease(
   if (inspection.teamId !== manifest.teamId) fail('RELEASE_TEAM_ID_MISMATCH');
   if (!inspection.architectures.includes(input.architecture)) fail('RELEASE_ARCHITECTURE_MISMATCH');
   if (!inspection.codeSignatureValid) fail('RELEASE_CODE_SIGNATURE_INVALID');
+  if (!inspection.hardenedRuntime) fail('RELEASE_HARDENED_RUNTIME_MISSING');
   if (!inspection.gatekeeperAccepted) fail('RELEASE_GATEKEEPER_REJECTED');
   if (!inspection.notarized) fail('RELEASE_NOTARIZATION_MISSING');
 

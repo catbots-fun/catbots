@@ -19,10 +19,14 @@ import { createServiceReleaseIdentity } from './service/runtime-identity';
 import { currentDataSchemaVersion } from './storage/migrations';
 import { createProductionInstallerCommandRunner, formatUninstallOutcome } from './installer/installer';
 import { createInstalledUninstaller } from './installer/uninstall';
+import { createProductionInstallerDependencies } from './installer/production-installer';
+import { compiledReleaseCommit } from './installer/release-trust';
 
 const origin = 'http://127.0.0.1:5180';
 let ownerStarted = false;
 const runInstaller = createProductionInstallerCommandRunner({
+  loadDependencies: () => createProductionInstallerDependencies({ app, origin }),
+  reportInstall: (outcome) => { process.stdout.write(`${JSON.stringify(outcome)}\n`); },
   uninstall: executeInstalledUninstall,
   reportUninstall: (outcome) => { process.stdout.write(formatUninstallOutcome(outcome, origin)); },
 });
@@ -31,10 +35,13 @@ void runRuntimeEntrypoint({
   argv: process.argv,
   packaged: app.isPackaged,
   requestSingleInstanceLock: () => app.requestSingleInstanceLock(),
-  startOwner: async () => {
+  startOwner: async (maintenanceOperationId) => {
     ownerStarted = true;
     process.env.CATBOTS_INSTANCE_LOCK_ACQUIRED = '1';
     process.env.CATBOTS_WEB = '1';
+    if (maintenanceOperationId !== undefined) {
+      process.env.CATBOTS_MAINTENANCE_OPERATION_ID = maintenanceOperationId;
+    }
     const nativeE2E = process.env.NODE_ENV === 'test'
       && process.env.CATBOTS_E2E_NATIVE === '1'
       && process.env.CATBOTS_E2E_DATA_DIR !== undefined;
@@ -84,7 +91,7 @@ async function executeInstalledUninstall(purgeData: boolean) {
   if (uid === undefined) throw new Error('USER_ID_UNAVAILABLE');
   const expectedRelease = createServiceReleaseIdentity({
     version: app.getVersion(),
-    commit: process.env.CATBOTS_RELEASE_COMMIT ?? 'development',
+    commit: app.isPackaged ? compiledReleaseCommit() : 'development',
     architecture: process.arch,
     dataSchemaVersion: currentDataSchemaVersion,
   });
@@ -139,7 +146,7 @@ async function createInstalledCliDependencies() {
   const health = createHealthClient({ origin });
   const expectedRelease = createServiceReleaseIdentity({
     version: app.getVersion(),
-    commit: process.env.CATBOTS_RELEASE_COMMIT ?? 'development',
+    commit: app.isPackaged ? compiledReleaseCommit() : 'development',
     architecture: process.arch,
     dataSchemaVersion: currentDataSchemaVersion,
   });
