@@ -38,16 +38,19 @@ export function createHealthClient(options: HealthClientOptions) {
     return isServiceIdentity(value) ? value : undefined;
   };
 
+  const waitFor = async (predicate: (identity: ServiceIdentity) => boolean): Promise<ServiceIdentity> => {
+    const deadline = now() + timeoutMs;
+    while (now() <= deadline) {
+      const identity = await current();
+      if (identity !== undefined && predicate(identity)) return identity;
+      await delay(pollMs);
+    }
+    throw new Error('SERVICE_START_TIMEOUT');
+  };
+
   return {
     current,
-    waitForReady: async (): Promise<ServiceIdentity> => {
-      const deadline = now() + timeoutMs;
-      while (now() <= deadline) {
-        const identity = await current();
-        if (identity?.readiness === 'ready') return identity;
-        await delay(pollMs);
-      }
-      throw new Error('SERVICE_START_TIMEOUT');
-    },
+    waitFor,
+    waitForReady: async (): Promise<ServiceIdentity> => waitFor((identity) => identity.readiness === 'ready'),
   };
 }

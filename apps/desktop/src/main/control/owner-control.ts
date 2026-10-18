@@ -24,13 +24,10 @@ export function createOwnerControlHandler(dependencies: OwnerControlDependencies
       return { ticket: dependencies.browserTickets.issue(30_000) };
     }
     if (command.kind === 'prepare-maintenance') {
-      if (command.reason === 'stop' || command.reason === 'uninstall') {
-        return dependencies.maintenance.begin({
-          operationId: command.operationId,
-          reason: command.reason,
-        });
-      }
-      throw new Error('MAINTENANCE_OPERATION_ID_REQUIRED');
+      return dependencies.maintenance.begin({
+        operationId: command.operationId,
+        reason: command.reason,
+      });
     }
     if (command.kind === 'cancel-maintenance') {
       if (dependencies.maintenance.current()?.operationId !== command.leaseId) {

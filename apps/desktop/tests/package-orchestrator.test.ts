@@ -9,10 +9,19 @@ function fakeChild(): SpawnedChild {
 }
 
 describe('package orchestrator runner', () => {
+  it.each(['package', 'make'] as const)('fails closed before spawning any production %s command without validated trust', async (command) => {
+    let spawned = false;
+    await expect(runDesktopCommand(command, {
+      run: async () => { spawned = true; },
+      assertTrust: async () => { throw new Error('RELEASE_TRUST_REQUIRED'); },
+    })).rejects.toThrow('RELEASE_TRUST_REQUIRED');
+    expect(spawned).toBe(false);
+  });
+
   it('runs Electron native rebuild, Forge start, and host ABI restoration in order for development', async () => {
-    const calls: Array<{ command: string; args: string[]; cwd: string }> = [];
-    const run = async (command: string, args: string[], cwd?: string) => {
-      calls.push({ command, args, cwd: cwd ?? '' });
+    const calls: Array<{ command: string; args: string[]; cwd: string; environment?: NodeJS.ProcessEnv }> = [];
+    const run = async (command: string, args: string[], cwd?: string, _onSpawn?: unknown, options?: { env?: NodeJS.ProcessEnv }) => {
+      calls.push({ command, args, cwd: cwd ?? '', environment: options?.env });
     };
 
     await runDesktopCommand('start', { run });
@@ -22,7 +31,21 @@ describe('package orchestrator runner', () => {
     expect(calls[0]?.command).toMatch(/electron-rebuild$/);
     expect(calls[1]).toMatchObject({ args: ['start'], cwd: expect.stringMatching(/apps\/desktop$/) });
     expect(calls[1]?.command).toMatch(/electron-forge$/);
+    expect(calls[1]?.environment?.CATBOTS_INTERNAL_FORGE_LIFECYCLE).toBe('start');
+    expect(calls[1]?.environment?.CATBOTS_INTERNAL_FORGE_PARENT_PID).toBe(String(process.pid));
     expect(calls[2]).toMatchObject({ args: ['run', 'install', '--prefix', expect.stringMatching(/node_modules\/better-sqlite3$/)] });
+  });
+
+  it.each(['package', 'make'] as const)('passes a matching internal lifecycle to Forge %s after the release gate succeeds', async (command) => {
+    const calls: Array<{ args: string[]; environment?: NodeJS.ProcessEnv }> = [];
+    await runDesktopCommand(command, {
+      assertTrust: async () => undefined,
+      run: async (_command, args, _cwd, _onSpawn, options) => {
+        calls.push({ args, environment: options?.env });
+      },
+    });
+    expect(calls.find((call) => call.args[0] === command)?.environment?.CATBOTS_INTERNAL_FORGE_LIFECYCLE)
+      .toBe(command);
   });
 
   it('uses the desktop directory by default and propagates nonzero child exits', async () => {

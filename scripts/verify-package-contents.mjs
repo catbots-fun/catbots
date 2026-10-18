@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
-import { mkdtemp, readdir, rm } from 'node:fs/promises';
+import { createHash, createPublicKey } from 'node:crypto';
+import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -62,7 +63,129 @@ export async function verifyProductionPackage(artifactDirectory) {
     { kind: 'exact', path: '.vite/renderer/main_window/web.html' },
     { kind: 'exact', path: 'Resources/catbots' },
     { kind: 'exact', path: 'Resources/fun.catbots.web.plist.template' },
+    { kind: 'exact', path: 'Resources/install.sh' },
+    { kind: 'exact', path: 'Resources/release-trust.json' },
   ]);
+  const sentinels = await findReleaseTrustSentinels(artifactDirectory);
+  if (sentinels.length > 0) throw new Error(`Release trust sentinel remains in package: ${sentinels.join(', ')}`);
+  const metadata = await findReleaseTrustMetadata(artifactDirectory);
+  if (metadata === 0) throw new Error('Release trust metadata missing from package');
+  await verifyReleaseTrustEquality(artifactDirectory);
+}
+
+async function verifyReleaseTrustEquality(directory) {
+  const identities = await collectReleaseTrustIdentities(directory);
+  const installers = identities.filter((value) => value.kind === 'installer');
+  const metadata = identities.filter((value) => value.kind === 'metadata');
+  if (installers.length === 0 || metadata.length === 0) throw new Error('Bootstrap release trust does not match signed-app metadata');
+  const expected = trustIdentity(metadata[0]);
+  if ([...installers, ...metadata].some((value) => trustIdentity(value) !== expected)) {
+    throw new Error('Bootstrap release trust does not match signed-app metadata');
+  }
+}
+
+async function collectReleaseTrustIdentities(directory) {
+  const identities = [];
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) identities.push(...await collectReleaseTrustIdentities(path));
+    else if (entry.isFile() && entry.name === 'install.sh') {
+      const source = await readFile(path, 'utf8');
+      const teamId = /^TEAM_ID='([^']+)'$/m.exec(source)?.[1];
+      const trust = /^PUBLIC_KEY_PEM='([\s\S]*?)'\nPUBLIC_KEY_FINGERPRINT='([a-f0-9]{64})'$/m.exec(source);
+      if (teamId === undefined || trust === null
+        || createHash('sha256').update(trust[1]).digest('hex') !== trust[2]) {
+        throw new Error('Bootstrap release trust does not match signed-app metadata');
+      }
+      identities.push({ kind: 'installer', teamId, publicKey: trust[1], fingerprint: trust[2] });
+    } else if (entry.isFile() && entry.name === 'release-trust.json') {
+      const value = JSON.parse(await readFile(path, 'utf8'));
+      identities.push({ kind: 'metadata', teamId: value.teamId, publicKey: value.publicKey, fingerprint: value.fingerprint });
+    } else if (entry.isFile() && entry.name.endsWith('.zip')) {
+      const inspectionDirectory = await mkdtemp(join(tmpdir(), 'catbots-package-trust-equality-'));
+      try {
+        await execute('unzip', ['-qq', '-o', path, '-d', inspectionDirectory]);
+        identities.push(...await collectReleaseTrustIdentities(inspectionDirectory));
+      } finally {
+        await rm(inspectionDirectory, { force: true, recursive: true });
+      }
+    }
+  }
+  return identities;
+}
+
+const trustIdentity = (value) => JSON.stringify({
+  teamId: value.teamId,
+  publicKey: value.publicKey,
+  fingerprint: value.fingerprint,
+});
+
+async function findReleaseTrustSentinels(directory) {
+  const findings = [];
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) findings.push(...await findReleaseTrustSentinels(path));
+    else if (entry.isFile() && entry.name === 'install.sh') {
+      if (containsReleaseSentinel(await readFile(path, 'utf8'))) findings.push(path);
+    } else if (entry.isFile() && entry.name.endsWith('.zip')) {
+      const inspectionDirectory = await mkdtemp(join(tmpdir(), 'catbots-package-trust-'));
+      try {
+        await execute('unzip', ['-qq', '-o', path, '-d', inspectionDirectory]);
+        findings.push(...await findReleaseTrustSentinels(inspectionDirectory));
+      } finally {
+        await rm(inspectionDirectory, { force: true, recursive: true });
+      }
+    }
+  }
+  return findings;
+}
+
+async function findReleaseTrustMetadata(directory) {
+  let count = 0;
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) count += await findReleaseTrustMetadata(path);
+    else if (entry.isFile() && entry.name === 'release-trust.json') {
+      let value;
+      try { value = JSON.parse(await readFile(path, 'utf8')); } catch { throw new Error('Release trust metadata invalid'); }
+      const keys = Object.keys(value).sort().join(',');
+      const fingerprint = typeof value.publicKey === 'string'
+        ? createHash('sha256').update(value.publicKey).digest('hex')
+        : '';
+      let keyType;
+      let modulusLength;
+      try {
+        const key = createPublicKey(value.publicKey);
+        keyType = key.asymmetricKeyType;
+        modulusLength = key.asymmetricKeyDetails?.modulusLength;
+      } catch { keyType = undefined; }
+      if (keys !== 'commit,fingerprint,publicKey,schemaVersion,teamId' || value.schemaVersion !== 1
+        || !/^[A-Z0-9]{10}$/.test(value.teamId) || !/^[a-f0-9]{6,64}$/.test(value.commit) || keyType !== 'rsa'
+        || modulusLength === undefined || modulusLength < 3072
+        || value.fingerprint !== fingerprint || containsReleaseSentinel(JSON.stringify(value))) {
+        throw new Error('Release trust metadata invalid');
+      }
+      count += 1;
+    } else if (entry.isFile() && entry.name.endsWith('.zip')) {
+      const inspectionDirectory = await mkdtemp(join(tmpdir(), 'catbots-package-trust-metadata-'));
+      try {
+        await execute('unzip', ['-qq', '-o', path, '-d', inspectionDirectory]);
+        count += await findReleaseTrustMetadata(inspectionDirectory);
+      } finally {
+        await rm(inspectionDirectory, { force: true, recursive: true });
+      }
+    }
+  }
+  return count;
+}
+
+function containsReleaseSentinel(value) {
+  const text = Buffer.isBuffer(value) ? value.toString('utf8') : value;
+  return text.includes('CATBOTS_TEAM_ID_REQUIRED')
+    || text.includes('CATBOTS_RELEASE_PUBLIC_KEY_REQUIRED')
+    || text.includes('CATBOTS_RELEASE_COMMIT_REQUIRED')
+    || text.includes('CATBOTS_RELEASE_TRUST_NOT_INJECTED')
+    || text.includes('CATBOTS_RELEASE_TRUST_FINGERPRINT_REQUIRED');
 }
 
 async function collectPackagedEntries(directory, displayRoot) {

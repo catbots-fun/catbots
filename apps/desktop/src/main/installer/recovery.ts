@@ -97,7 +97,11 @@ async function rollbackInterruptedInstall(
   };
   if (journal.phase !== 'rolling-back') await dependencies.store.writeJournal(rollingBack);
 
-  const lease = await dependencies.maintenance.acquire({ operationId: journal.operationId, reason: 'upgrade' });
+  const lease = await dependencies.maintenance.acquire({
+    operationId: journal.operationId,
+    reason: 'upgrade',
+    desiredReleaseId: journal.desiredReleaseId,
+  });
   if (lease.operationId !== journal.operationId) throw new Error('MAINTENANCE_LEASE_MISMATCH');
 
   const failures: unknown[] = [];
@@ -145,9 +149,8 @@ async function finishInterruptedCommit(
   journal: InstallJournal,
   dependencies: InstallerTransactionDependencies,
 ): Promise<InstallerRecoveryResult> {
-  const lease = await dependencies.maintenance.acquire({ operationId: journal.operationId, reason: 'upgrade' });
-  if (lease.operationId !== journal.operationId) throw new Error('MAINTENANCE_LEASE_MISMATCH');
   await dependencies.maintenance.commit(journal.operationId);
+  await dependencies.launchAgent.commit({ operationId: journal.operationId, paths: journal.paths });
   await dependencies.application.commit({
     operationId: journal.operationId,
     applicationPath: journal.paths.application,

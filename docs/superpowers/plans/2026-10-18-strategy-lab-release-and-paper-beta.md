@@ -107,11 +107,11 @@ does not accept staging paths or trust policy from the installer request file.
 - Create: `apps/desktop/tests/install-script.test.ts`
 - Modify: `package.json`
 
-- [ ] Download the signed manifest over HTTPS.
-- [ ] Verify the manifest signature and the artifact digest before opening the package.
-- [ ] Run the packaged installer command and print its final health result.
-- [ ] Support `--version`, `--uninstall`, and `--purge-data` without editing the script.
-- [ ] Fail closed when a verification tool, signature, digest, or health check fails.
+- [x] Download the signed manifest over HTTPS.
+- [x] Verify the manifest signature and the artifact digest before opening the package.
+- [x] Run the packaged installer command and print its final health result.
+- [x] Support `--version`, `--uninstall`, and `--purge-data` without editing the script.
+- [x] Fail closed when a verification tool, signature, digest, or health check fails.
 
 ## Task 7: Build and verify release artifacts
 
