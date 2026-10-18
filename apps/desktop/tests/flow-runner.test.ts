@@ -165,6 +165,20 @@ it('recovers interrupted state despite unavailable audit storage',async()=>{
   expect(venue.place).not.toHaveBeenCalled();
 });
 
+it.each(['missing','partial'] as const)('blocks production DCA before exchange access when native protection is %s',async mode=>{
+  vi.useFakeTimers();
+  const {runner,venue}=setup();
+  if(mode==='partial')venue.protection={submitProtection:async()=> 'id'} as never;
+  const flow:FlowDocument={schemaVersion:'3.0',nodes:[{id:'dca',type:'strategy.dca',version:1,config:{quotePerOrder:20,maxNotional:50,takeProfitPercent:10,stopLossPercent:5,maxExtraOrders:0,extraStepPercent:2,repeat:true}}],edges:[]};
+  flow.nodes.push({id:'n',type:'process.number',version:1,config:{value:1}},{id:'yes',type:'condition.compare',version:1,config:{operator:'eq'}});
+  flow.edges.push({source:'n',sourcePort:'value',target:'yes',targetPort:'left'},{source:'n',sourcePort:'value',target:'yes',targetPort:'right'},{source:'yes',sourcePort:'result',target:'dca',targetPort:'signal'});
+  await expect(runner.start(target.botId,1,flow,target,'production',venue)).rejects.toThrow('Native protection');
+  expect(venue.snapshot).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(venue.place).not.toHaveBeenCalled();
+  expect(runner.get(target.botId)).toBeUndefined();
+});
+
 it("enforces notional, collateral, position, reduce-only and existing-order constraints", () => {
   expect(guardOrder(order, snapshot, target).quantity).toBe(0.2);
   expect(() => guardOrder({ ...order, quantity: 1 }, snapshot, target)).toThrow(
@@ -745,6 +759,17 @@ it.each([false, 'order_outcome', 'protection'] as const)("installs native protec
   await vi.advanceTimersByTimeAsync(2000);
   expect(runner.get(target.botId)?.protection?.status).toBe("protected");
   expect(venue.protection.submitProtection).toHaveBeenCalledTimes(2);
+  if(auditFails===false){
+    await runner.stop(target.botId);
+    const saved=runner.get(target.botId);
+    const unsupported:FlowVenue={snapshot:vi.fn(async times=>venue.snapshot(times)),place:vi.fn(async (plan,id,state)=>venue.place(plan,id,state))};
+    await expect(runner.start(target.botId,1,flow,target,'testnet',unsupported)).rejects.toThrow('Native protection');
+    await expect(runner.reconcile(target.botId,unsupported)).rejects.toThrow('Native protection');
+    expect(unsupported.snapshot).not.toHaveBeenCalled();
+    expect(runner.get(target.botId)).toEqual(saved);
+    expect(runner.get(target.botId)?.protection?.status).toBe('protected');
+    await runner.start(target.botId,1,flow,target,'testnet',venue);
+  }
   const protectionCount=runner.auditHistory(target.botId).filter(row=>row.kind==='protection').length;
   await vi.advanceTimersByTimeAsync(1000);
   expect(runner.auditHistory(target.botId).filter(row=>row.kind==='protection')).toHaveLength(protectionCount);

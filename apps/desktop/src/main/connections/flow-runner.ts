@@ -99,6 +99,16 @@ export function validateFlowTarget(
       );
   }
 }
+function requireProtectionCapability(document: FlowDocument, environment: 'production' | 'testnet', venue: FlowVenue, savedProtection: boolean) {
+  const required = savedProtection || (environment === 'production' && document.nodes.some(node => node.type === 'strategy.dca'));
+  if (!required && !venue.protection) return;
+  const capability = venue.protection;
+  if (!capability || typeof capability.submitProtection !== 'function'
+    || typeof capability.inspectProtection !== 'function' || typeof capability.cancelProtection !== 'function') {
+    throw new Error('Native protection is required but unsupported by this execution adapter. No exchange request was sent.');
+  }
+}
+
 export function guardOrder(
   order: OrderPlan,
   snapshot: VenueSnapshot,
@@ -252,6 +262,7 @@ export class FlowRunner {
         "Previous order outcome is unresolved. Exchange reconciliation is required before restart.",
       );
     validateFlowTarget(document, target, environment);
+    requireProtectionCapability(document, environment, venue, !!this.records[botId]?.protection);
     for (const other of Object.values(this.records))
       if (
         other.pending &&
@@ -802,6 +813,7 @@ export class FlowRunner {
         throw new Error("Stop the bot before reconciling");
       accepted = !!record;
       if (record) this.safetyAudit(record, 'reconciliation', { event: 'requested', pending });
+      if (record) requireProtectionCapability(record.document, record.view.environment, venue, !!record.protection);
       if (record?.protection && venue.protection)
         await this.syncProtection(record, venue, await venue.snapshot([]));
       if (!record?.pending) {
