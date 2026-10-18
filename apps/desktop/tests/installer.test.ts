@@ -5,6 +5,7 @@ import {
   createInstallerCommandRunner,
   createProductionInstallerCommandRunner,
   runInstallerCommand,
+  formatUninstallOutcome,
 } from '../src/main/installer/installer';
 import type { InstallTransactionInput, InstallerTransactionDependencies } from '../src/main/installer/install-transaction';
 
@@ -95,6 +96,25 @@ describe('CatbotsInstaller boundary', () => {
 
     await expect(installer.reconcile('/private/tmp/request.json')).rejects.toThrow('INSTALL_REQUEST_INVALID');
   });
+
+  it('delegates an explicit purge request to the configured safe uninstaller', async () => {
+    const requests: boolean[] = [];
+    const installer = createInstaller({
+      requests: { read: async () => input },
+      transactionDependencies: {} as InstallerTransactionDependencies,
+      uninstall: async (purgeData) => {
+        requests.push(purgeData);
+        return { kind: 'purged', operationId: 'uninstall-1', dataPreserved: false };
+      },
+    });
+
+    await expect(installer.uninstall(true)).resolves.toEqual({
+      kind: 'purged',
+      operationId: 'uninstall-1',
+      dataPreserved: false,
+    });
+    expect(requests).toEqual([true]);
+  });
 });
 
 describe('installer command entrypoint', () => {
@@ -104,6 +124,9 @@ describe('installer command entrypoint', () => {
       reconcile: async (requestFile: string) => {
         calls.push(requestFile);
         return { kind: 'installed' as const, operationId: 'operation-1', releaseId: '0.2.0+abc123' };
+      },
+      uninstall: async () => {
+        throw new Error('must not uninstall');
       },
     };
 
@@ -131,5 +154,55 @@ describe('installer command entrypoint', () => {
 
     await expect(runner({ kind: 'reconcile', requestFile: '/private/tmp/request.json' })).resolves.toBe(0);
     expect(events).toEqual(['dependencies', 'recover', 'transact']);
+  });
+
+  it('routes uninstall and the explicit purge flag through the installer boundary', async () => {
+    const requests: boolean[] = [];
+    const installer = {
+      reconcile: async () => {
+        throw new Error('must not reconcile');
+      },
+      uninstall: async (purgeData: boolean) => {
+        requests.push(purgeData);
+        return {
+          kind: purgeData ? 'purged' as const : 'uninstalled' as const,
+          operationId: 'uninstall-1',
+          dataPreserved: !purgeData,
+        };
+      },
+    };
+
+    await expect(runInstallerCommand(
+      { kind: 'uninstall', purgeData: false },
+      () => installer,
+    )).resolves.toBe(0);
+    await expect(runInstallerCommand(
+      { kind: 'uninstall', purgeData: true },
+      () => installer,
+    )).resolves.toBe(0);
+    expect(requests).toEqual([false, true]);
+  });
+
+  it('returns a nonzero public exit when production uninstall is blocked by maintenance', async () => {
+    let stdout = '';
+    const runner = createProductionInstallerCommandRunner({
+      uninstall: async () => ({
+        kind: 'blocked',
+        blockers: [
+          { kind: 'active-deployment', deploymentId: 'paper-1', route: '/#deploy' },
+          { kind: 'database-repair-required', route: '/#repair' },
+        ],
+      }),
+      reportUninstall: (outcome) => { stdout += formatUninstallOutcome(outcome, 'http://127.0.0.1:5180'); },
+    });
+
+    await expect(runner({ kind: 'uninstall', purgeData: false })).resolves.toBe(2);
+    expect(stdout).toBe([
+      'Catbots could not uninstall safely.',
+      '- active-deployment: http://127.0.0.1:5180/#deploy',
+      '- database-repair-required: http://127.0.0.1:5180/#repair',
+      'Resolve every blocker and run catbots uninstall again.',
+      '',
+    ].join('\n'));
   });
 });

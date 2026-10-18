@@ -140,7 +140,7 @@ Run: `pnpm --filter @catbots/desktop exec vitest run tests/process-intent.test.t
 
 Expected: both commands exit 0.
 
-- [ ] **Step 5: Commit the task**
+- [x] **Step 5: Commit the task**
 
 ```bash
 git add apps/desktop/src/main/application/process-intent.ts apps/desktop/tests/process-intent.test.ts
@@ -586,21 +586,21 @@ git commit -m "feat(installer): reconcile install update and rollback"
 - Consumes: `ManagedPaths`, `MaintenanceCoordinator`, `LaunchAgentController`, `InstallStore`, and an interactive confirmation port.
 - Produces: `uninstall(request): Promise<UninstallOutcome>`.
 
-- [ ] **Step 1: Write failing uninstall tests**
+- [x] **Step 1: Write failing uninstall tests**
 
 Assert maintenance blockers, service unload, managed-file deletion, preserved application data, idempotent repeat, exact purge confirmation, noninteractive purge rejection, and symlink rejection.
 
-- [ ] **Step 2: Run the uninstall tests and confirm RED**
+- [x] **Step 2: Run the uninstall tests and confirm RED**
 
 Run: `pnpm --filter @catbots/desktop exec vitest run tests/uninstall.test.ts`
 
 Expected: FAIL because `uninstall.ts` does not exist.
 
-- [ ] **Step 3: Implement uninstall through validated managed paths**
+- [x] **Step 3: Implement uninstall through validated managed paths**
 
 Do not use recursive deletion on an unresolved path. Record each deletion in the transaction journal before it occurs.
 
-- [ ] **Step 4: Verify GREEN and run the desktop suite**
+- [x] **Step 4: Verify GREEN and run the desktop suite**
 
 Run: `pnpm --filter @catbots/desktop exec vitest run tests/uninstall.test.ts && pnpm --filter @catbots/desktop test`
 

@@ -1,11 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { mkdir, open, readFile, readdir, rename, rm, stat } from 'node:fs/promises';
+import { constants as fsConstants, type Stats } from 'node:fs';
+import type { FileHandle } from 'node:fs/promises';
+import { lstat, mkdir, open, readFile, readdir, rename, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { z } from 'zod';
 import { syncDirectory } from './durable-filesystem';
 import type { InstallJournal, InstallPhase } from './types';
+import type { UninstallDeletionRecord } from './uninstall';
 
 const phases = [
   'prepared',
@@ -52,6 +55,24 @@ const journalSchema = z.strictObject({
 
 const secretField = /(api.?key|authorization|credential|private.?key|browser.?ticket|wallet|secret)/i;
 
+const uninstallDeletionSchema = z.strictObject({
+  schemaVersion: z.literal(1),
+  operationId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{2,127}$/),
+  kind: z.literal('delete'),
+  path: z.string().startsWith('/'),
+  recursive: z.boolean(),
+  quarantinePath: z.string().startsWith('/'),
+  phase: z.enum(['prepared', 'quarantined', 'complete']),
+  identity: z.strictObject({
+    dev: z.number().int().nonnegative(),
+    ino: z.number().int().nonnegative(),
+    uid: z.number().int().nonnegative(),
+    directory: z.boolean(),
+    file: z.boolean(),
+  }),
+  recordedAt: z.string().datetime({ offset: true }),
+});
+
 export type ProcessIncarnationProvider = Readonly<{
   current(): Promise<Readonly<{ pid: number; incarnation: string }>>;
   isAlive(pid: number): boolean;
@@ -60,6 +81,7 @@ export type ProcessIncarnationProvider = Readonly<{
 
 type InstallStoreDependencies = Readonly<{
   processes?: ProcessIncarnationProvider;
+  inspectDeletionJournal?: (path: string) => Promise<Stats>;
 }>;
 
 const execFileAsync = promisify(execFile);
@@ -114,13 +136,18 @@ const nodeProcessIncarnations = createNodeProcessIncarnationProvider();
 
 export class InstallStore {
   private readonly journalPath: string;
+  private readonly deletionJournalPath: string;
   private readonly lockDirectory: string;
   private readonly processes: ProcessIncarnationProvider;
+  private readonly inspectDeletionJournal: (path: string) => Promise<Stats>;
+  private deletionJournalHandle: FileHandle | undefined;
 
   constructor(private readonly directory: string, dependencies: InstallStoreDependencies = {}) {
     this.journalPath = join(directory, 'install-journal.json');
+    this.deletionJournalPath = join(directory, 'uninstall-deletions.jsonl');
     this.lockDirectory = join(directory, 'install-locks');
     this.processes = dependencies.processes ?? nodeProcessIncarnations;
+    this.inspectDeletionJournal = dependencies.inspectDeletionJournal ?? lstat;
   }
 
   async lock(operationId: string): Promise<Readonly<{ release(): Promise<void> }>> {
@@ -145,6 +172,34 @@ export class InstallStore {
     const journal = await this.readJournal();
     if (journal?.operationId !== operationId) throw new Error('INSTALL_OPERATION_CONFLICT');
     return this.createLease(operationId, true);
+  }
+
+  async lockForUninstall(operationId: string): Promise<Readonly<{ release(): Promise<void> }>> {
+    const lease = await this.createLease(operationId, false);
+    try {
+      const journal = await this.readJournal();
+      if (journal !== undefined) {
+        if (journal.phase !== 'complete' && journal.phase !== 'rolled-back') {
+          throw new Error('INSTALL_RECOVERY_REQUIRED');
+        }
+        await this.clearJournal(journal.operationId);
+      }
+      this.deletionJournalHandle = await this.openDeletionJournal();
+    } catch (error) {
+      await lease.release();
+      throw error;
+    }
+    let released = false;
+    return Object.freeze({
+      release: async () => {
+        if (released) return;
+        const journal = this.deletionJournalHandle;
+        this.deletionJournalHandle = undefined;
+        await journal?.close();
+        await lease.release();
+        released = true;
+      },
+    });
   }
 
   private async createLease(
@@ -289,6 +344,114 @@ export class InstallStore {
     await rm(this.journalPath, { force: true });
     await syncDirectory(this.directory);
   }
+
+  async recordDeletion(record: UninstallDeletionRecord): Promise<void> {
+    const parsed = uninstallDeletionSchema.safeParse(record);
+    if (!parsed.success || containsSecretField(record)) throw new Error('UNINSTALL_DELETION_RECORD_INVALID');
+    const held = this.deletionJournalHandle;
+    if (held !== undefined) {
+      await appendDeletionRecord(held, parsed.data, process.getuid?.());
+      return;
+    }
+    const handle = await this.openDeletionJournal();
+    try {
+      await appendDeletionRecord(handle, parsed.data, process.getuid?.());
+    } finally {
+      await handle.close();
+    }
+  }
+
+  private async openDeletionJournal(): Promise<FileHandle> {
+    await mkdir(this.directory, { recursive: true, mode: 0o700 });
+    const directoryStatus = await stat(this.directory);
+    const expectedUid = process.getuid?.();
+    if (!directoryStatus.isDirectory() || directoryStatus.isSymbolicLink()
+      || expectedUid === undefined || directoryStatus.uid !== expectedUid
+      || (directoryStatus.mode & 0o022) !== 0) {
+      throw new Error('UNSAFE_UNINSTALL_DELETION_JOURNAL');
+    }
+    let before: Stats | undefined;
+    try {
+      before = await this.inspectDeletionJournal(this.deletionJournalPath);
+      if (!before.isFile() || before.isSymbolicLink() || before.uid !== expectedUid
+        || (before.mode & 0o022) !== 0) {
+        throw new Error('UNSAFE_UNINSTALL_DELETION_JOURNAL');
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        if (error instanceof Error && error.message === 'UNSAFE_UNINSTALL_DELETION_JOURNAL') throw error;
+        throw new Error('UNSAFE_UNINSTALL_DELETION_JOURNAL');
+      }
+    }
+    const flags = fsConstants.O_RDWR | fsConstants.O_APPEND | fsConstants.O_NOFOLLOW
+      | (before === undefined ? fsConstants.O_CREAT | fsConstants.O_EXCL : 0);
+    let handle: FileHandle;
+    try {
+      handle = await open(this.deletionJournalPath, flags, 0o600);
+    } catch {
+      throw new Error('UNSAFE_UNINSTALL_DELETION_JOURNAL');
+    }
+    const opened = await handle.stat();
+    if (!opened.isFile() || opened.uid !== expectedUid || (opened.mode & 0o022) !== 0
+      || (before !== undefined && (opened.dev !== before.dev || opened.ino !== before.ino))) {
+      await handle.close();
+      throw new Error('UNSAFE_UNINSTALL_DELETION_JOURNAL');
+    }
+    await syncDirectory(this.directory);
+    return handle;
+  }
+
+  async readDeletionJournal(): Promise<readonly UninstallDeletionRecord[]> {
+    let serialized: string;
+    const held = this.deletionJournalHandle;
+    if (held !== undefined) {
+      serialized = await readHandleFromStart(held);
+    } else {
+      try {
+        serialized = await readFile(this.deletionJournalPath, 'utf8');
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+        throw error;
+      }
+    }
+    try {
+      return serialized.split('\n').filter(Boolean).map((line) => {
+        const parsed = uninstallDeletionSchema.safeParse(JSON.parse(line));
+        if (!parsed.success) throw new Error('UNINSTALL_DELETION_JOURNAL_CORRUPT');
+        return Object.freeze(parsed.data);
+      });
+    } catch (error) {
+      if (error instanceof Error && error.message === 'UNINSTALL_DELETION_JOURNAL_CORRUPT') throw error;
+      throw new Error('UNINSTALL_DELETION_JOURNAL_CORRUPT');
+    }
+  }
+}
+
+async function readHandleFromStart(handle: FileHandle): Promise<string> {
+  const size = (await handle.stat()).size;
+  if (size === 0) return '';
+  const buffer = Buffer.alloc(size);
+  let offset = 0;
+  while (offset < size) {
+    const { bytesRead } = await handle.read(buffer, offset, size - offset, offset);
+    if (bytesRead === 0) break;
+    offset += bytesRead;
+  }
+  return buffer.subarray(0, offset).toString('utf8');
+}
+
+async function appendDeletionRecord(
+  handle: FileHandle,
+  record: UninstallDeletionRecord,
+  expectedUid: number | undefined,
+): Promise<void> {
+  const opened = await handle.stat();
+  if (expectedUid === undefined || !opened.isFile() || opened.uid !== expectedUid
+    || (opened.mode & 0o022) !== 0) {
+    throw new Error('UNSAFE_UNINSTALL_DELETION_JOURNAL');
+  }
+  await handle.writeFile(`${JSON.stringify(record)}\n`, 'utf8');
+  await handle.sync();
 }
 
 type SerializedLeaseOwner = Readonly<{

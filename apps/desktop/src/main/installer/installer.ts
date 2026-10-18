@@ -6,10 +6,12 @@ import {
 } from './install-transaction';
 import { recoverInterruptedInstall, type InstallerRecoveryResult } from './recovery';
 import type { InstallerCommand } from '../application/process-intent';
+import type { UninstallOutcome } from './uninstall';
 import { z } from 'zod';
 
 export type CatbotsInstaller = Readonly<{
   reconcile(requestFile: string): Promise<InstallTransactionResult>;
+  uninstall(purgeData: boolean): Promise<UninstallOutcome>;
 }>;
 
 export type InstallerDependencies = Readonly<{
@@ -22,6 +24,7 @@ export type InstallerDependencies = Readonly<{
     input: InstallTransactionInput,
     dependencies: InstallerTransactionDependencies,
   ) => Promise<InstallTransactionResult>;
+  uninstall?: (purgeData: boolean) => Promise<UninstallOutcome>;
 }>;
 
 const requestSchema = z.strictObject({
@@ -59,6 +62,10 @@ export function createInstaller(dependencies: InstallerDependencies): CatbotsIns
       const request: InstallTransactionInput = parsed.data;
       return transact(request, dependencies.transactionDependencies);
     },
+    uninstall: async (purgeData) => {
+      if (dependencies.uninstall === undefined) throw new Error('UNINSTALL_PLATFORM_UNAVAILABLE');
+      return dependencies.uninstall(purgeData);
+    },
   });
 }
 
@@ -72,19 +79,43 @@ export function createInstallerCommandRunner(dependencies: Readonly<{
 }
 
 export function createProductionInstallerCommandRunner(
-  platform?: Readonly<{ loadDependencies(): Promise<InstallerDependencies> }>,
+  platform?: Readonly<{
+    loadDependencies?(): Promise<InstallerDependencies>;
+    uninstall?(purgeData: boolean): Promise<UninstallOutcome>;
+    reportUninstall?(outcome: UninstallOutcome): void;
+  }>,
 ): (command: InstallerCommand) => Promise<number> {
-  if (platform === undefined) {
-    return async () => { throw new Error('INSTALLER_PLATFORM_UNAVAILABLE'); };
+  return async (command) => {
+    if (command.kind === 'uninstall') {
+      if (platform?.uninstall === undefined) throw new Error('UNINSTALL_PLATFORM_UNAVAILABLE');
+      const outcome = await platform.uninstall(command.purgeData);
+      platform.reportUninstall?.(outcome);
+      return outcome.kind === 'blocked' ? 2 : 0;
+    }
+    if (platform?.loadDependencies === undefined) throw new Error('INSTALLER_PLATFORM_UNAVAILABLE');
+    return createInstallerCommandRunner({ loadDependencies: platform.loadDependencies })(command);
+  };
+}
+
+export function formatUninstallOutcome(outcome: UninstallOutcome, origin: string): string {
+  if (outcome.kind === 'blocked') {
+    return `${[
+      'Catbots could not uninstall safely.',
+      ...outcome.blockers.map((blocker) => `- ${blocker.kind}: ${origin}${blocker.route}`),
+      'Resolve every blocker and run catbots uninstall again.',
+    ].join('\n')}\n`;
   }
-  return createInstallerCommandRunner(platform);
+  return outcome.kind === 'purged'
+    ? 'Catbots and its application data were removed.\n'
+    : 'Catbots was removed. Application data was preserved.\n';
 }
 
 export async function runInstallerCommand(
   command: InstallerCommand,
   factory: () => CatbotsInstaller,
 ): Promise<number> {
-  if (command.kind !== 'reconcile') throw new Error('INSTALLER_COMMAND_NOT_IMPLEMENTED');
-  await factory().reconcile(command.requestFile);
+  const installer = factory();
+  if (command.kind === 'reconcile') await installer.reconcile(command.requestFile);
+  else await installer.uninstall(command.purgeData);
   return 0;
 }

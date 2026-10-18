@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
+import { createInterface } from 'node:readline/promises';
 import { app, shell } from 'electron';
-import { runRuntimeEntrypoint } from './application/runtime-entrypoint';
-import type { CliCommand, ControlCommand } from './application/process-intent';
+import { dispatchPublicCliCommand, runRuntimeEntrypoint } from './application/runtime-entrypoint';
+import type { CliCommand, ControlCommand, ServiceCliCommand } from './application/process-intent';
 import { createControlClient } from './control/socket-client';
 import {
   formatCliOutcome,
@@ -16,11 +17,15 @@ import { createHealthClient } from './service/health-client';
 import { LaunchAgentController, loadLaunchAgentTemplate } from './service/launch-agent';
 import { createServiceReleaseIdentity } from './service/runtime-identity';
 import { currentDataSchemaVersion } from './storage/migrations';
-import { createProductionInstallerCommandRunner } from './installer/installer';
+import { createProductionInstallerCommandRunner, formatUninstallOutcome } from './installer/installer';
+import { createInstalledUninstaller } from './installer/uninstall';
 
 const origin = 'http://127.0.0.1:5180';
 let ownerStarted = false;
-const runInstaller = createProductionInstallerCommandRunner();
+const runInstaller = createProductionInstallerCommandRunner({
+  uninstall: executeInstalledUninstall,
+  reportUninstall: (outcome) => { process.stdout.write(formatUninstallOutcome(outcome, origin)); },
+});
 
 void runRuntimeEntrypoint({
   argv: process.argv,
@@ -59,10 +64,64 @@ void runRuntimeEntrypoint({
 });
 
 async function executeCli(command: CliCommand): Promise<number> {
+  return dispatchPublicCliCommand(command, {
+    runService: executeServiceCli,
+    runUninstall: (purgeData) => runInstaller({ kind: 'uninstall', purgeData }),
+  });
+}
+
+async function executeServiceCli(command: ServiceCliCommand): Promise<number> {
   const dependencies = await createInstalledCliDependencies();
   const outcome = await runCliCommand(command, dependencies);
   process.stdout.write(`${formatCliOutcome(outcome)}\n`);
   return outcome.kind === 'blocked' ? 2 : 0;
+}
+
+async function executeInstalledUninstall(purgeData: boolean) {
+  await app.whenReady();
+  const home = app.getPath('home');
+  const uid = process.getuid?.();
+  if (uid === undefined) throw new Error('USER_ID_UNAVAILABLE');
+  const expectedRelease = createServiceReleaseIdentity({
+    version: app.getVersion(),
+    commit: process.env.CATBOTS_RELEASE_COMMIT ?? 'development',
+    architecture: process.arch,
+    dataSchemaVersion: currentDataSchemaVersion,
+  });
+  const template = await loadLaunchAgentTemplate(join(
+    process.resourcesPath,
+    'fun.catbots.web.plist.template',
+  ));
+  const dataDirectory = join(home, 'Library', 'Application Support', 'Catbots');
+  const logDirectory = join(home, 'Library', 'Logs', 'Catbots');
+  return createInstalledUninstaller({
+    homeDirectory: home,
+    uid,
+    operationId: randomUUID,
+    confirmation: {
+      isInteractive: () => process.stdin.isTTY === true && process.stdout.isTTY === true,
+      read: async (prompt) => {
+        const lines = createInterface({ input: process.stdin, output: process.stdout });
+        try {
+          return await lines.question(prompt);
+        } finally {
+          lines.close();
+        }
+      },
+    },
+    health: createHealthClient({ origin }),
+    expectedRelease,
+    socketPath: join(dataDirectory, 'control', 'catbots.sock'),
+    createControl: createControlClient,
+    launchAgent: (paths) => new LaunchAgentController({
+      uid,
+      executablePath: join(paths.application, 'Contents', 'MacOS', 'Catbots'),
+      plistPath: paths.launchAgent,
+      stdoutPath: join(logDirectory, 'service.log'),
+      stderrPath: join(logDirectory, 'service.error.log'),
+      template,
+    }),
+  })(purgeData);
 }
 
 async function executeControl(command: ControlCommand): Promise<number> {

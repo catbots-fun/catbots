@@ -12,6 +12,7 @@ export type OwnerControlDependencies = Readonly<{
   maintenance: {
     begin(request: MaintenanceLease): Promise<unknown>;
     current(): MaintenanceLease | undefined;
+    rollback(operationId: string): Promise<void>;
   };
   shutdown(leaseId: string): Promise<void>;
 }>;
@@ -23,13 +24,20 @@ export function createOwnerControlHandler(dependencies: OwnerControlDependencies
       return { ticket: dependencies.browserTickets.issue(30_000) };
     }
     if (command.kind === 'prepare-maintenance') {
-      if (command.reason === 'stop') {
+      if (command.reason === 'stop' || command.reason === 'uninstall') {
         return dependencies.maintenance.begin({
           operationId: command.operationId,
           reason: command.reason,
         });
       }
       throw new Error('MAINTENANCE_OPERATION_ID_REQUIRED');
+    }
+    if (command.kind === 'cancel-maintenance') {
+      if (dependencies.maintenance.current()?.operationId !== command.leaseId) {
+        throw new Error('MAINTENANCE_LEASE_MISMATCH');
+      }
+      await dependencies.maintenance.rollback(command.leaseId);
+      return { kind: 'cancelled' };
     }
     const lease = dependencies.maintenance.current();
     if (lease?.operationId !== command.leaseId) throw new Error('MAINTENANCE_LEASE_MISMATCH');

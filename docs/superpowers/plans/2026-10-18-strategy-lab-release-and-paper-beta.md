@@ -94,10 +94,10 @@ does not accept staging paths or trust policy from the installer request file.
 - Create: `apps/desktop/tests/uninstall.test.ts`
 - Modify: `apps/desktop/src/main/service/cli-command.ts`
 
-- [ ] Stop the service and remove only paths owned by Catbots.
-- [ ] Preserve profiles, bots, logs, and provider configuration during a normal uninstall.
-- [ ] Require an explicit `--purge-data` option to remove user data.
-- [ ] Make repeated uninstall and purge commands return success.
+- [x] Stop the service and remove only paths owned by Catbots.
+- [x] Preserve profiles, bots, logs, and provider configuration during a normal uninstall.
+- [x] Require an explicit `--purge-data` option to remove user data.
+- [x] Make repeated uninstall and purge commands return success.
 
 ## Task 6: Add the curl bootstrap installer
 

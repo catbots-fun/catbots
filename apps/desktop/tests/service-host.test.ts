@@ -37,7 +37,7 @@ describe('service host', () => {
         body: new TextEncoder().encode('<!doctype html><title>Catbots</title>'),
         contentType: 'text/html; charset=utf-8',
       }),
-      maintenance: { begin: vi.fn(), current: () => undefined },
+      maintenance: { begin: vi.fn(), current: () => undefined, rollback: vi.fn() },
       shutdown: vi.fn(),
     });
     cleanup.push(async () => { await host.close(); await rm(directory, { force: true, recursive: true }); });

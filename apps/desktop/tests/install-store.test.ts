@@ -110,6 +110,20 @@ describe('installer transaction store', () => {
     await next.release();
   });
 
+  it('allows uninstall after acknowledging a terminal install journal but preserves nonterminal recovery', async () => {
+    const complete = await store();
+    await complete.value.writeJournal(journal({ phase: 'complete' }));
+    const uninstallLease = await complete.value.lockForUninstall('uninstall-1');
+    await expect(complete.value.readJournal()).resolves.toBeUndefined();
+    await uninstallLease.release();
+
+    const interrupted = await store();
+    await interrupted.value.writeJournal(journal({ phase: 'new-app-installed' }));
+    await expect(interrupted.value.lockForUninstall('uninstall-2'))
+      .rejects.toThrow('INSTALL_RECOVERY_REQUIRED');
+    await expect(interrupted.value.readJournal()).resolves.toMatchObject({ phase: 'new-app-installed' });
+  });
+
   it('persists the process incarnation in every electable lease', async () => {
     const { directory, value } = await store();
     const lock = await value.lock('operation-1');
