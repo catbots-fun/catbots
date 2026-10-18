@@ -46,6 +46,8 @@ export function defaultConfig(type: string): Record<string, unknown> {
     'risk.position_size': { riskPercent: 1, maxNotional: 100 },
     'risk.trailing_exit': { side: 'long', activationPercent: 2, callbackPercent: 1 },
     'action.order': { side: 'buy', reduceOnly: false }, 'action.flow_order': { side: 'buy', reduceOnly: false },
+    'strategy.directional': { quotePerOrder: 15 },
+    'strategy.mean_reversion': { quotePerOrder: 15 },
     'strategy.dca': { quotePerOrder: 100, takeProfitPercent: 2, stopLossPercent: 10, maxNotional: 500, extraStepPercent: 5, maxExtraOrders: 2 },
     'strategy.grid': { quotePerOrder: 100, takeProfitPercent: 2, stopLossPercent: 10, maxNotional: 500, levels: 3, stepPercent: 5 },
     'strategy.smart_order': { quantity: 2, sliceQuantity: 1, maxNotional: 500 },

@@ -21,10 +21,9 @@ it('edits the selected legacy node configuration and submits without changing it
 });
 it('debugs the screenshot market guard against fetched market input', async () => {
   render(<LegacyNodeConfiguration node={node} revision={revision} />);
-  fireEvent.click(screen.getByRole('tab', { name: 'Data & debug' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Run node' }));
-  await waitFor(() => expect(screen.getByText(/"result": true/)).toBeTruthy());
+  fireEvent.click(screen.getByRole('button', { name: 'Execute step' }));
+  await waitFor(() => expect(screen.getByText("true")).toBeTruthy());
   fireEvent.change(screen.getByRole('textbox', { name: 'Market' }), { target: { value: 'BTC-PERP' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Run node' }));
-  await waitFor(() => expect(screen.getByText(/"result": false/)).toBeTruthy());
+  fireEvent.click(screen.getByRole('button', { name: 'Execute step' }));
+  await waitFor(() => expect(screen.getByText("false")).toBeTruthy());
 });

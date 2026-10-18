@@ -58,6 +58,7 @@ describe('Agent tool catalog', () => {
     const catalog = createCatalog();
 
     expect(catalog.definitions.map(({ name }) => name)).toEqual([
+      'run_flow_backtest', 'get_flow_backtest', 'cancel_flow_backtest',
       'get_flow', 'edit_flow', 'validate_flow', 'list_nodes', 'list_data_products', 'validate_strategy', 'backtest_strategy', 'explain_strategy', 'compare_versions',
     ]);
     expect(catalog.definitions.every(({ inputSchema }) => inputSchema.additionalProperties === false)).toBe(true);

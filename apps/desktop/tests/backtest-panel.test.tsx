@@ -102,7 +102,7 @@ describe('BacktestPanel', () => {
     expect(screen.getByRole('heading', { name: 'By market' })).toBeTruthy();
     const ethRow = screen.getByRole('row', { name: /ETH-PERP/ });
     expect(within(ethRow).getByText('$120.00')).toBeTruthy();
-    expect(screen.getByLabelText('Equity curve')).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Equity curve' })).toBeTruthy();
     expect(screen.getByRole('alert').textContent).toContain('not live market data');
   });
 
