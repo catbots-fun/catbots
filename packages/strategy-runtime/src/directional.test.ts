@@ -5,6 +5,16 @@ const def=strategyPackage.definitions.find(d=>d.type==='strategy.directional')!;
 const config=def.config.parse({quotePerOrder:100,rsiThreshold:55,stopAtr:2,rewardRisk:2,minAtrPercent:0,cooldownMinutes:5,maxHoldMinutes:30});
 const input=(long=true)=>({fast:ready('number',long?101:99),slow:ready('number',100),rsi:ready('number',long?60:40),atr:ready('number',1)});
 const ctx=(at=0):FlowContext=>({runId:String(at),deploymentId:'test',market:'SOL-PERP',at,price:100,equity:1000,candles:{},fills:[],cancelledOrderIds:[]});
+it('never opens a position during risk-only evaluation even with ready entry signals',()=>{
+ const run=def.evaluate(input(),config,{...ctx(),evaluationMode:'risk'},undefined,'strategy');
+ expect(run.orders).toHaveLength(0);
+});
+it('checks holding-time exits without signal inputs during risk-only evaluation',()=>{
+ const first=def.evaluate(input(),config,ctx(),undefined,'strategy'),order=first.orders![0];
+ const held=def.evaluate(input(),config,{...ctx(1000),fills:[{id:'entry',clientOrderId:order.clientOrderId,side:'buy',quantity:1,price:100,fee:.01}]},first.state,'strategy');
+ const exit=def.evaluate({},config,{...ctx(1801000),evaluationMode:'risk'},held.state,'strategy');
+ expect(exit.orders).toEqual([expect.objectContaining({side:'sell',quantity:1,reduceOnly:true})]);
+});
 for(const long of [true,false])it(`confirms ${long?'long':'short'} fills, exits reduce-only and waits through cooldown`,()=>{
  const first=def.evaluate(input(long),config,ctx(),undefined,'strategy');const order=first.orders![0];expect(order.side).toBe(long?'buy':'sell');
  const pending=def.evaluate(input(!long),config,ctx(60000),first.state,'strategy');expect(pending.orders).toHaveLength(0);

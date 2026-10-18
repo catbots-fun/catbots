@@ -37,7 +37,7 @@ export const directionalDefinition: FlowDefinition = {
       if(state.position!==0){
         const gain=Math.sign(state.position)*(context.price-state.entry),risk=state.atr*config.stopAtr;
         if(gain<=-risk||gain>=risk*config.rewardRisk||context.at-state.openedAt>=config.maxHoldMinutes*60000)submit(state.position>0?'sell':'buy',Math.abs(state.position),true);
-      } else if(context.at>=state.cooldownUntil&&Object.values(input).every(value=>value.quality==='ready'&&Number.isFinite(value.value))){
+      } else if(context.evaluationMode!=='risk'&&context.at>=state.cooldownUntil&&Object.values(input).every(value=>value.quality==='ready'&&Number.isFinite(value.value))){
         const fast=input.fast.value as number,slow=input.slow.value as number,rsi=input.rsi.value as number,atr=input.atr.value as number;
         if(atr>0&&atr/context.price*100>=config.minAtrPercent){
           if(fast>slow&&rsi>=config.rsiThreshold){state.atr=atr;submit('buy',config.quotePerOrder/context.price,false);}

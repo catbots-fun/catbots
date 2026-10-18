@@ -109,6 +109,10 @@ function requireProtectionCapability(document: FlowDocument, environment: 'produ
   }
 }
 
+function hasRiskEvaluation(node: FlowDocument['nodes'][number]) {
+  return node.type === 'strategy.dca' || node.type === 'strategy.directional';
+}
+
 export function guardOrder(
   order: OrderPlan,
   snapshot: VenueSnapshot,
@@ -424,7 +428,7 @@ export class FlowRunner {
       if (
         !signal &&
         (Date.now() - (record.lastRiskAt ?? 0) < 5000 ||
-          !record.document.nodes.some((node) => node.type === "strategy.dca"))
+          !record.document.nodes.some(hasRiskEvaluation))
       )
         return;
       const snapshot = await active.venue.snapshot(signal ? times : []);
@@ -769,19 +773,17 @@ export class FlowRunner {
       cancelOrderIds: [],
       trace: [],
     };
-    for (const node of record.document.nodes.filter(
-      (node) => node.type === "strategy.dca",
-    )) {
+    for (const node of record.document.nodes.filter(hasRiskEvaluation)) {
       const definition = runtimeNodePackages
         .flatMap((pkg) => pkg.definitions)
         .find((def) => def.type === node.type)!;
-      const input = {
+      const input: Parameters<typeof definition.evaluate>[0] = node.type === 'strategy.dca' ? {
         signal: {
           type: "condition" as const,
           quality: "ready" as const,
           value: false,
         },
-      };
+      } : {};
       const result = definition.evaluate(
         input,
         definition.config.parse(node.config),
