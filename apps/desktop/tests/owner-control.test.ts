@@ -22,7 +22,7 @@ describe('owner control handler', () => {
     const handle = createOwnerControlHandler({
       identity: () => identity,
       browserTickets: { issue },
-      maintenance: { begin: vi.fn(), current: vi.fn() },
+      maintenance: { begin: vi.fn(), current: vi.fn(), rollback: vi.fn() },
       shutdown: vi.fn(),
     });
 
@@ -42,7 +42,7 @@ describe('owner control handler', () => {
     const handle = createOwnerControlHandler({
       identity: () => identity,
       browserTickets: { issue: vi.fn() },
-      maintenance: { begin, current: () => decision.lease },
+      maintenance: { begin, current: () => decision.lease, rollback: vi.fn() },
       shutdown,
     });
 
@@ -62,12 +62,34 @@ describe('owner control handler', () => {
     const handle = createOwnerControlHandler({
       identity: () => identity,
       browserTickets: { issue: vi.fn() },
-      maintenance: { begin: vi.fn(), current: () => undefined },
+      maintenance: { begin: vi.fn(), current: () => undefined, rollback: vi.fn() },
       shutdown,
     });
 
     await expect(handle({ kind: 'shutdown', leaseId: 'stale' }))
       .rejects.toThrow('MAINTENANCE_LEASE_MISMATCH');
     expect(shutdown).not.toHaveBeenCalled();
+  });
+
+  it('uses the caller operation ID for uninstall and can cancel that lease', async () => {
+    const lease = { operationId: 'uninstall-1', reason: 'uninstall' as const };
+    const begin = vi.fn(async () => ({ kind: 'ready' as const, lease }));
+    const rollback = vi.fn(async () => undefined);
+    const handle = createOwnerControlHandler({
+      identity: () => identity,
+      browserTickets: { issue: vi.fn() },
+      maintenance: { begin, current: () => lease, rollback },
+      shutdown: vi.fn(),
+    });
+
+    await expect(handle({
+      kind: 'prepare-maintenance',
+      operationId: 'uninstall-1',
+      reason: 'uninstall',
+    })).resolves.toEqual({ kind: 'ready', lease });
+    await expect(handle({ kind: 'cancel-maintenance', leaseId: 'uninstall-1' }))
+      .resolves.toEqual({ kind: 'cancelled' });
+    expect(begin).toHaveBeenCalledWith(lease);
+    expect(rollback).toHaveBeenCalledWith('uninstall-1');
   });
 });

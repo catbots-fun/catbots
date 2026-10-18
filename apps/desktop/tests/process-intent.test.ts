@@ -12,6 +12,16 @@ describe('parseProcessIntent', () => {
     });
   });
 
+  it.each([
+    { argv: ['Catbots', '--cli', 'uninstall'], purgeData: false },
+    { argv: ['Catbots', '--cli', 'uninstall', '--purge-data'], purgeData: true },
+  ])('parses the public uninstall command: $argv', ({ argv, purgeData }) => {
+    expect(parseProcessIntent(argv, { packaged: true })).toEqual({
+      kind: 'cli',
+      command: { kind: 'uninstall', purgeData },
+    });
+  });
+
   it('defaults a packaged launch to open-ui', () => {
     expect(parseProcessIntent(['/Applications/Catbots.app/Contents/MacOS/Catbots'], {
       packaged: true,
@@ -52,8 +62,8 @@ describe('parseProcessIntent', () => {
       },
     },
     {
-      argv: ['Catbots', '--control', 'prepare-maintenance', 'uninstall'],
-      command: { kind: 'prepare-maintenance', reason: 'uninstall' },
+      argv: ['Catbots', '--control', 'prepare-maintenance', 'uninstall', 'uninstall-1'],
+      command: { kind: 'prepare-maintenance', reason: 'uninstall', operationId: 'uninstall-1' },
     },
     {
       argv: ['Catbots', '--control', 'shutdown', 'lease-123'],
@@ -95,7 +105,7 @@ describe('parseProcessIntent', () => {
     ['Catbots', '--serve-web', '--control', 'status'],
     ['Catbots', '--control'],
     ['Catbots', '--control', 'prepare-maintenance', 'upgrade'],
-    ['Catbots', '--control', 'prepare-maintenance', 'uninstall', 'unexpected-release'],
+    ['Catbots', '--control', 'prepare-maintenance', 'uninstall'],
     ['Catbots', '--cli'],
     ['Catbots', '--cli', 'update'],
     ['Catbots', '--cli', 'start', 'unexpected'],

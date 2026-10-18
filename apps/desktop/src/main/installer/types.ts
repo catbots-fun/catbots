@@ -54,12 +54,21 @@ export type InstallPhase =
   | 'rolled-back'
   | 'complete';
 
+export type PreviousInstallationState =
+  | Readonly<{ kind: 'absent' }>
+  | Readonly<{
+      kind: 'installed';
+      releaseId: string;
+      desiredService: 'running' | 'stopped';
+    }>;
+
 export type InstallJournal = Readonly<{
   schemaVersion: 1;
   operationId: string;
   phase: InstallPhase;
+  rollbackFromPhase?: InstallPhase;
   desiredReleaseId: string;
-  previousReleaseId?: string;
+  previousInstallation: PreviousInstallationState;
   desiredService: 'running' | 'stopped';
   preserveData: boolean;
   paths: ManagedPaths;

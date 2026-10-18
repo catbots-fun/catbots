@@ -1,4 +1,4 @@
-import type { CliCommand, ControlCommand } from '../application/process-intent';
+import type { ControlCommand, ServiceCliCommand } from '../application/process-intent';
 import type { DesiredServiceState } from './desired-state';
 import type { LaunchAgentStatus } from './launch-agent';
 import { serviceIdentityMatches, type ServiceIdentity } from '../web/service-identity';
@@ -48,7 +48,7 @@ export type CliDependencies = Readonly<{
 }>;
 
 export async function runCliCommand(
-  command: CliCommand,
+  command: ServiceCliCommand,
   dependencies: CliDependencies,
 ): Promise<CliOutcome> {
   if (command === 'status') return status(dependencies);

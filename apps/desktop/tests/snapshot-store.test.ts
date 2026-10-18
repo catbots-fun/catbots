@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { SnapshotStore } from '../src/main/installer/snapshot-store';
+import { pathExists } from '../src/main/installer/durable-filesystem';
 
 const directories: string[] = [];
 
@@ -26,6 +27,23 @@ afterEach(async () => {
 });
 
 describe('installer data snapshots', () => {
+  it('treats only ENOENT as absence and propagates filesystem uncertainty', async () => {
+    await expect(pathExists('/missing', async () => {
+      throw Object.assign(new Error('missing'), { code: 'ENOENT' });
+    })).resolves.toBe(false);
+    for (const code of ['EACCES', 'EIO']) {
+      await expect(pathExists('/uncertain', async () => {
+        throw Object.assign(new Error('uncertain'), { code });
+      })).rejects.toMatchObject({ code });
+    }
+  });
+  it('reports whether a complete snapshot exists without treating an absent snapshot as corrupt', async () => {
+    const { store } = await fixture();
+    await expect(store.exists('operation-1')).resolves.toBe(false);
+    await store.create({ operationId: 'operation-1', requiredBytes: 1 });
+    await expect(store.exists('operation-1')).resolves.toBe(true);
+  });
+
   it('creates a completed snapshot and restores the exact product data', async () => {
     const { data, store } = await fixture();
     await writeFile(join(data, 'config.yaml'), 'profile: before\n', { mode: 0o600 });

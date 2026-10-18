@@ -14,14 +14,17 @@ export type ControlCommand =
   | {
       readonly kind: 'prepare-maintenance';
       readonly reason: 'uninstall';
+      readonly operationId: string;
     }
+  | { readonly kind: 'cancel-maintenance'; readonly leaseId: string }
   | { readonly kind: 'shutdown'; readonly leaseId: string };
 
 export type InstallerCommand =
   | { readonly kind: 'reconcile'; readonly requestFile: string }
   | { readonly kind: 'uninstall'; readonly purgeData: boolean };
 
-export type CliCommand = 'open' | 'status' | 'start' | 'stop';
+export type ServiceCliCommand = 'open' | 'status' | 'start' | 'stop';
+export type CliCommand = ServiceCliCommand | Readonly<{ kind: 'uninstall'; purgeData: boolean }>;
 
 export type ProcessIntent =
   | { readonly kind: 'serve-web'; readonly window: 'never'; readonly port: 5180 }
@@ -64,8 +67,14 @@ export function parseProcessIntent(
     return { kind: 'serve-web', window: 'never', port: 5180 };
   }
 
-  if (args.length === 2 && args[0] === '--cli' && isCliCommand(args[1])) {
+  if (args.length === 2 && args[0] === '--cli' && isServiceCliCommand(args[1])) {
     return { kind: 'cli', command: args[1] };
+  }
+  if (args.length === 2 && args[0] === '--cli' && args[1] === 'uninstall') {
+    return { kind: 'cli', command: { kind: 'uninstall', purgeData: false } };
+  }
+  if (args.length === 3 && args[0] === '--cli' && args[1] === 'uninstall' && args[2] === '--purge-data') {
+    return { kind: 'cli', command: { kind: 'uninstall', purgeData: true } };
   }
 
   if (args[0] === '--control') {
@@ -91,7 +100,7 @@ function isElectronAutomationArgument(value: string): boolean {
     || /^--remote-debugging-port=\d+$/.test(value);
 }
 
-function isCliCommand(value: string | undefined): value is CliCommand {
+function isServiceCliCommand(value: string | undefined): value is ServiceCliCommand {
   return value === 'open' || value === 'status' || value === 'start' || value === 'stop';
 }
 
@@ -108,8 +117,12 @@ function parseControlCommand(args: readonly string[]): ControlCommand {
       targetRelease: args[2],
     };
   }
-  if (args.length === 2 && args[0] === 'prepare-maintenance' && args[1] === 'uninstall') {
-    return { kind: 'prepare-maintenance', reason: 'uninstall' };
+  if (args.length === 3 && args[0] === 'prepare-maintenance' && args[1] === 'uninstall') {
+    if (args[2].length === 0) return invalid();
+    return { kind: 'prepare-maintenance', reason: 'uninstall', operationId: args[2] };
+  }
+  if (args.length === 2 && args[0] === 'cancel-maintenance' && args[1].length > 0) {
+    return { kind: 'cancel-maintenance', leaseId: args[1] };
   }
   if (args.length === 2 && args[0] === 'shutdown') {
     if (args[1].length === 0) return invalid();

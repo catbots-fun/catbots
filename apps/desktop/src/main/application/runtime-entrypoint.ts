@@ -1,5 +1,16 @@
 import { bootstrapCatbots, type BootstrapPlatform } from './bootstrap';
-import { parseProcessIntent } from './process-intent';
+import { parseProcessIntent, type CliCommand, type ServiceCliCommand } from './process-intent';
+
+export async function dispatchPublicCliCommand(
+  command: CliCommand,
+  dependencies: Readonly<{
+    runService(command: ServiceCliCommand): Promise<number>;
+    runUninstall(purgeData: boolean): Promise<number>;
+  }>,
+): Promise<number> {
+  if (typeof command === 'object') return dependencies.runUninstall(command.purgeData);
+  return dependencies.runService(command);
+}
 
 export type RuntimeEntrypointDependencies = Readonly<{
   argv: readonly string[];

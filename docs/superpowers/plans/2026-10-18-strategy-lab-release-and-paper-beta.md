@@ -76,11 +76,15 @@
 - Create: `apps/desktop/tests/installer-recovery.test.ts`
 
 - [x] Add a durable atomic journal store with release identity, managed paths, desired service state, and operation IDs.
-- [ ] Wire the installer transaction so it writes the journal before each state change.
-- [ ] Stage and verify the app before changing the active installation.
+- [x] Wire the installer transaction so it writes the journal before each state change.
+- [x] Stage and verify the app before changing the active installation.
 - [x] Add a durable product-data snapshot store with restore and retention behavior.
-- [ ] Activate with a same-volume rename and restore the snapshot after any failure.
-- [ ] Recover or roll back an interrupted transaction at the next installer start.
+- [x] Activate with a same-volume rename and restore the snapshot after any failure.
+- [x] Recover or roll back an interrupted transaction at the next installer start.
+
+The packaged installer entrypoint is deliberately fail-closed with `INSTALLER_PLATFORM_UNAVAILABLE`
+until Task 6 supplies the trusted artifact staging and release-verification platform dependencies. It
+does not accept staging paths or trust policy from the installer request file.
 
 ## Task 5: Add uninstall and purge commands
 
@@ -90,10 +94,10 @@
 - Create: `apps/desktop/tests/uninstall.test.ts`
 - Modify: `apps/desktop/src/main/service/cli-command.ts`
 
-- [ ] Stop the service and remove only paths owned by Catbots.
-- [ ] Preserve profiles, bots, logs, and provider configuration during a normal uninstall.
-- [ ] Require an explicit `--purge-data` option to remove user data.
-- [ ] Make repeated uninstall and purge commands return success.
+- [x] Stop the service and remove only paths owned by Catbots.
+- [x] Preserve profiles, bots, logs, and provider configuration during a normal uninstall.
+- [x] Require an explicit `--purge-data` option to remove user data.
+- [x] Make repeated uninstall and purge commands return success.
 
 ## Task 6: Add the curl bootstrap installer
 

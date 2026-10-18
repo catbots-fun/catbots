@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto';
 import {
-  access,
   cp,
   lstat,
   mkdir,
@@ -12,7 +11,7 @@ import {
   statfs,
 } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
-import { syncDirectory } from './durable-filesystem';
+import { pathExists, syncDirectory } from './durable-filesystem';
 
 export type SnapshotRecord = Readonly<{
   schemaVersion: 1;
@@ -59,7 +58,7 @@ export class SnapshotStore {
     const staging = `${destination}.staging-${randomUUID()}`;
     await mkdir(staging, { mode: 0o700 });
     try {
-      if (await exists(this.productDataDirectory)) {
+      if (await pathExists(this.productDataDirectory)) {
         await assertTreeContainsNoSymlinks(this.productDataDirectory);
         await cp(this.productDataDirectory, join(staging, 'data'), {
           recursive: true,
@@ -98,7 +97,7 @@ export class SnapshotStore {
     const restore = join(parent, `.${name}.restore-${randomUUID()}`);
     const previous = join(parent, `.${name}.previous-${randomUUID()}`);
     await cp(source, restore, { recursive: true, preserveTimestamps: true, errorOnExist: true, force: false });
-    const hadPrevious = await exists(this.productDataDirectory);
+    const hadPrevious = await pathExists(this.productDataDirectory);
     try {
       if (hadPrevious) await rename(this.productDataDirectory, previous);
       await rename(restore, this.productDataDirectory);
@@ -106,12 +105,16 @@ export class SnapshotStore {
       await rm(previous, { recursive: true, force: true });
     } catch (error) {
       await rm(restore, { recursive: true, force: true });
-      if (hadPrevious && await exists(previous) && !await exists(this.productDataDirectory)) {
+      if (hadPrevious && await pathExists(previous) && !await pathExists(this.productDataDirectory)) {
         await rename(previous, this.productDataDirectory);
         await syncDirectory(parent);
       }
       throw error;
     }
+  }
+
+  async exists(operationId: string): Promise<boolean> {
+    return await this.read(operationId) !== undefined;
   }
 
   async prune(input: Readonly<{
@@ -146,7 +149,7 @@ export class SnapshotStore {
       value = JSON.parse(await readFile(join(this.snapshotPath(operationId), 'snapshot.json'), 'utf8'));
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        if (!await exists(this.snapshotPath(operationId))) return undefined;
+        if (!await pathExists(this.snapshotPath(operationId))) return undefined;
         throw new Error('SNAPSHOT_CORRUPT');
       }
       throw new Error('SNAPSHOT_CORRUPT');
@@ -170,15 +173,6 @@ async function assertTreeContainsNoSymlinks(root: string): Promise<void> {
   if (status.isSymbolicLink()) throw new Error('SNAPSHOT_SOURCE_UNSAFE');
   if (!status.isDirectory()) return;
   for (const entry of await readdir(root)) await assertTreeContainsNoSymlinks(join(root, entry));
-}
-
-async function exists(path: string): Promise<boolean> {
-  try {
-    await access(path);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 async function filesystemAvailableBytes(path: string): Promise<number> {
