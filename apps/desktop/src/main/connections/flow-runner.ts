@@ -4,6 +4,7 @@ import {
   type ProtectionState,
 } from "./native-protection";
 import { perpSize } from "./hyperliquid-precision";
+import { FlowAuditStore, type FlowAuditEvent } from './flow-audit';
 import { createHash, randomUUID } from "node:crypto";
 import {
   existsSync,
@@ -164,6 +165,7 @@ type Stored = {
   lastRiskAt?: number;
 };
 export class FlowRunner {
+  private audit: FlowAuditStore;
   private reconciling = new Set<string>();
   private archives: Stored[] = [];
   private records: Record<string, Stored> = {};
@@ -178,6 +180,7 @@ export class FlowRunner {
     }
   >();
   constructor(private path: string) {
+    this.audit = new FlowAuditStore(`${path}.audit.sqlite`);
     if (existsSync(`${path}.history`))
       this.archives = JSON.parse(readFileSync(`${path}.history`, "utf8"));
     if (existsSync(path)) this.records = JSON.parse(readFileSync(path, "utf8"));
@@ -209,6 +212,12 @@ export class FlowRunner {
     return this.archives
       .filter((item) => item.view.botId === botId)
       .map((item) => structuredClone(item.view));
+  }
+  auditHistory(botId: string, after = 0, limit = 50) {
+    return this.audit.list(botId, after, limit);
+  }
+  private auditEvent(record: Stored, kind: FlowAuditEvent['kind'], details: unknown) {
+    this.audit.append({ botId: record.view.botId, deploymentId: record.view.id, version: record.view.version, kind, details });
   }
   get(botId: string) {
     return this.records[botId]
@@ -409,6 +418,11 @@ export class FlowRunner {
       const run = signal
         ? active.evaluate(context, record.state)
         : this.riskRun(record, context);
+      this.auditEvent(record, 'evaluation', {
+        runId: context.runId, source: signal ? 'signal' : 'risk',
+        market: context.market, evaluatedAt: context.at,
+        trace: run.trace, orders: run.orders, cancelOrderIds: run.cancelOrderIds,
+      });
       record.lastRiskAt = Date.now();
       record.view.riskCheckedAt = new Date().toISOString();
       if (run.cancelOrderIds.length)
@@ -438,6 +452,7 @@ export class FlowRunner {
         );
         const cloid =
           `0x${createHash("sha256").update(proposal.clientOrderId).digest("hex").slice(0, 32)}` as `0x${string}`;
+        this.auditEvent(record, 'order_intent', { runId: context.runId, cloid, order, risk: 'passed' });
         record.pending = cloid;
         record.pendingOrder = order;
         record.view.orders.push({
@@ -471,6 +486,7 @@ export class FlowRunner {
           (id) => id !== proposal.clientOrderId,
         );
         this.persist();
+        this.auditEvent(record, 'order_outcome', { runId: context.runId, cloid, ...record.view.orders[record.view.orders.length - 1] });
         if (active.venue.protection) {
           const after = await active.venue.snapshot([]);
           if (!(await this.syncProtection(record, active.venue, after))) {
@@ -507,6 +523,8 @@ export class FlowRunner {
       active.stop = true;
       this.active.delete(botId);
       this.persist();
+      // Audit failure must not erase the recovery journal or trigger a resend.
+      try { this.auditEvent(record, 'failure', { error: record.view.error, pending: record.pending, status: record.view.status }); } catch { /* Runtime is already stopped; preserve recovery evidence. */ }
     }
   }
   connectionRunning(connectionId: string) {

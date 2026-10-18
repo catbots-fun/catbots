@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
@@ -133,12 +133,65 @@ it("evaluates once per interval, records a confirmed fill, and stops scheduling"
   expect(venue.place).toHaveBeenCalledTimes(1);
   expect(runner.get(target.botId)?.status).toBe("stopped");
 });
+it("keeps every evaluation and correlated order event after restart", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date('2026-10-18T00:00:00Z'));
+  const { runner, venue, path } = setup();
+  await runner.start(target.botId, 3, doc, target, 'testnet', venue);
+  await vi.advanceTimersByTimeAsync(61000);
+  await runner.stop(target.botId);
+  const rows = new FlowRunner(path).auditHistory(target.botId);
+  expect(rows.filter(row => row.kind === 'evaluation')).toHaveLength(2);
+  expect(rows.filter(row => row.kind === 'order_intent')).toHaveLength(2);
+  const outcomes = rows.filter(row => row.kind === 'order_outcome');
+  expect(outcomes).toHaveLength(2);
+  expect(outcomes[0].details).toMatchObject({ status: 'filled' });
+  const intent = rows.find(row => row.kind === 'order_intent')!;
+  expect(outcomes[0].details).toMatchObject({ cloid: (intent.details as { cloid: string }).cloid });
+  expect(rows.every(row => row.deploymentId === runner.get(target.botId)!.id)).toBe(true);
+});
+it("retains skipped no-trade evaluations rather than only evaluations with orders", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date('2026-10-18T00:00:00Z'));
+  const { runner, venue } = setup();
+  const noSignal = structuredClone(doc);
+  noSignal.nodes.push(
+    { id: 'false', type: 'condition.compare', version: 1, config: { operator: 'gt' } },
+    { id: 'branch', type: 'condition.branch', version: 1, config: {} },
+  );
+  noSignal.edges = [
+    ...noSignal.edges.filter(edge => edge.source !== 'tick'),
+    { source: 'size', sourcePort: 'value', target: 'false', targetPort: 'left' },
+    { source: 'size', sourcePort: 'value', target: 'false', targetPort: 'right' },
+    { source: 'false', sourcePort: 'result', target: 'branch', targetPort: 'condition' },
+    { source: 'tick', sourcePort: 'flow', target: 'branch', targetPort: 'flow' },
+    { source: 'branch', sourcePort: 'true', target: 'buy', targetPort: 'flow' },
+  ];
+  await runner.start(target.botId, 3, noSignal, target, 'testnet', venue);
+  await vi.advanceTimersByTimeAsync(61000);
+  await runner.stop(target.botId);
+  expect(venue.place).not.toHaveBeenCalled();
+  const rows = runner.auditHistory(target.botId);
+  expect(rows).toHaveLength(2);
+  expect(rows[0].details).toMatchObject({ orders: [], trace: expect.arrayContaining([expect.objectContaining({ nodeId: 'buy', status: 'skipped' })]) });
+});
+it("does not submit when the audit store cannot persist an evaluation", async () => {
+  vi.useFakeTimers();
+  const { runner, venue, path } = setup();
+  mkdirSync(`${path}.audit.sqlite`);
+  await runner.start(target.botId, 3, doc, target, 'testnet', venue);
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(venue.place).not.toHaveBeenCalled();
+  expect(runner.get(target.botId)?.status).toBe('failed');
+});
 it("halts on ambiguous submission and never retries or permits a blind restart", async () => {
   vi.useFakeTimers();
   const { runner, venue } = setup(true);
   await runner.start(target.botId, 1, doc, target, "testnet", venue);
   await vi.advanceTimersByTimeAsync(2000);
   expect(runner.get(target.botId)?.status).toBe("failed");
+  expect(runner.auditHistory(target.botId).map(row => row.kind)).toEqual(['evaluation', 'order_intent', 'failure']);
+  expect(runner.auditHistory(target.botId).at(-1)?.details).toMatchObject({ status: 'failed', pending: expect.any(String) });
   await vi.advanceTimersByTimeAsync(120000);
   expect(venue.place).toHaveBeenCalledTimes(1);
   await expect(
