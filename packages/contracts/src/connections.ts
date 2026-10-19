@@ -141,6 +141,7 @@ export type FlowDeployment = {
   startedAt: string;
   lastRunAt?: string;
   error?: string;
+  failureCode?: 'snapshot_unavailable' | 'position_mismatch';
   auditWarning?: string;
   entriesPaused?: boolean;
   entryPauseSupported?: boolean;
@@ -181,7 +182,7 @@ export type FlowDeployment = {
 };
 export const RuntimeIncidentSchema = z.object({
   id: z.string().uuid(), botId: z.string().min(1), deploymentId: z.string().min(1),
-  code: z.enum(['runtime_failed','runtime_interrupted','runtime_stalled','order_uncertain','close_unverified','protection_attention']),
+  code: z.enum(['runtime_failed','runtime_interrupted','runtime_stalled','order_uncertain','close_unverified','protection_attention','exchange_snapshot_unavailable','position_mismatch']),
   phase: z.enum(['detected','cleared']), at: z.string().datetime(),
   delivery: z.enum(['pending','shown','unavailable']), attempts: z.number().int().min(0).max(3),
 });
@@ -189,6 +190,7 @@ export type RuntimeIncident = z.infer<typeof RuntimeIncidentSchema>;
 export const runtimeIncidentLabels: Record<RuntimeIncident['code'],string> = {
   runtime_failed:'Runtime failed', runtime_interrupted:'Runtime interrupted', runtime_stalled:'Runtime stalled',
   order_uncertain:'Order outcome uncertain', close_unverified:'Position close needs review', protection_attention:'Position protection needs review',
+  exchange_snapshot_unavailable:'Exchange snapshot unavailable', position_mismatch:'Position differs from recorded inventory',
 };
 export type ExchangeActivity = {
   fetchedAt: string;
