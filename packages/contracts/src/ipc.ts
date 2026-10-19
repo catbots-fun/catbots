@@ -55,6 +55,7 @@ export const ProductCapabilitiesSchema = z.object({
   strategyResearch: z.boolean(),
   paperExecution: z.boolean(),
   liveExecution: z.boolean(),
+  testnetExecution: z.boolean().optional(),
   exchangeConnections: z.boolean(),
 }).strict();
 

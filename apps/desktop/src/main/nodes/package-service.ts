@@ -10,10 +10,10 @@ import { NodePackageCommandSchema, type InstalledNodePackage, type NodePackageSt
 import { CommunityNodeCatalog, listRuntimePackages, serializeCanonicalJson, validateNodePackage, type JsonValue } from '@catbots/strategy-runtime';
 export class NodePackageService {
   private backtests?: FlowBacktestService;
-  backtestCommand(input: unknown) { this.backtests ??= new FlowBacktestService(`${this.path}.backtest-cache`, botId => this.flowStore().get(botId)); return { packages: [], backtest: this.backtests.command(input) }; }
+  backtestCommand(input: unknown) { this.backtests ??= new FlowBacktestService(`${this.path}.backtest-cache`, botId => this.flowStore().get(botId), undefined, fetch, this.getDex); return { packages: [], backtest: this.backtests.command(input) }; }
   dispose() { this.backtests?.dispose(); }
   private packages: InstalledNodePackage[];
-  constructor(private path: string) {
+  constructor(private path: string,private getDex:(botId:string)=>'hyperliquid'|'lighter'=()=> 'hyperliquid') {
     this.packages = [];
     if (existsSync(path)) {
       const text = readFileSync(path, 'utf8'); if (text.length > 10000000) throw new Error('Node package storage too large');

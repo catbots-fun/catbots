@@ -144,8 +144,9 @@ describe('BotsHomeScreen', () => {
     dexSelect.focus();
     await user.keyboard('{Enter}');
     const options = screen.getAllByRole('option');
-    expect(options).toHaveLength(1);
+    expect(options).toHaveLength(2);
     expect(options[0]?.textContent).toContain('Hyperliquid');
+    expect(options[1]?.textContent).toContain('Lighter');
     await user.keyboard('{Escape}');
 
     nameInput.focus();

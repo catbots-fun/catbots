@@ -1,7 +1,6 @@
 import { FlowRunner, validateFlowTarget } from "./flow-runner";
 import { RuntimeIncidents } from './runtime-incidents';
 import type { RuntimeIncident } from '@catbots/contracts';
-import { HyperliquidFlowVenue } from "./flow-venue";
 import type { ExchangeActivity, BotExecutionOverview, ChatFlowDraft } from "@catbots/contracts";
 import {
   ExecutionTargetSchema,
@@ -51,7 +50,7 @@ export class ConnectionsService {
     const cached=this.activityCache.get(key);
     if(cached && Date.now()-cached.at<15000) return cached.value;
     const adapter=this.adapters.find(item=>item.descriptor.id===connection.adapterId);
-    const value=adapter?.activity ? adapter.activity(account,connection.environment) : Promise.reject(new Error('Unavailable'));
+    const value=adapter?.activity ? adapter.activity(account,connection.environment,connection) : Promise.reject(new Error('Unavailable'));
     this.activityCache.set(key,{at:Date.now(),value});
     return value;
   }
@@ -60,19 +59,32 @@ export class ConnectionsService {
   private connections: ExchangeConnection[] = [];
   constructor(
     private path: string,
-    private adapters: ExchangeAdapter[] = [new HyperliquidAdapter()],
+    private adapters: ExchangeAdapter[] = [],
     private authorization?: ConnectionAuthorization,
     private openWalletBrowser?: (id?: string) => Promise<void>,
     private getFlow?: (botId: string) => ChatFlowDraft | undefined,
     private botExists?: (botId: string) => boolean,
     private persistTargets: (path: string, targets: Record<string, ExecutionTarget>) => void = persistTargetsAtomically,
+    private botDex?: (botId: string) => string | undefined,
+    private executionEnvironmentAllowed: (environment: 'production'|'testnet') => boolean = () => true,
   ) {
+    if (!this.adapters.length) this.adapters = [new HyperliquidAdapter(fetch, this.authorization)];
     this.runner = new FlowRunner(`${path}.runtime`);
     if (existsSync(path))
       this.connections = z
         .array(ExchangeConnectionSchema)
         .max(100)
         .parse(JSON.parse(readFileSync(path, "utf8")));
+  }
+  private adapter(connection: ExchangeConnection) {
+    const adapter = this.adapters.find(item => item.descriptor.id === connection.adapterId);
+    if (!adapter) throw new Error('Execution adapter unavailable');
+    return adapter;
+  }
+  private async venue(connection: ExchangeConnection, target: ExecutionTarget) {
+    const adapter = this.adapter(connection);
+    if (!adapter.createVenue) throw new Error('Execution adapter unavailable');
+    return adapter.createVenue(connection, target);
   }
   assertBotRemovable(botId:string) {
     const run=this.runner.get(botId);
@@ -142,7 +154,7 @@ export class ConnectionsService {
     if (input.action === "save_target") {
       if (
         this.starting.has(botId) ||
-        this.runner.isBusy(botId) || ["running", "stopping"].includes(this.runner.get(botId)?.status ?? "")
+        this.runner.isBusy(botId) || this.runner.botUnresolved(botId) || ["running", "stopping", "interrupted"].includes(this.runner.get(botId)?.status ?? "")
       )
         throw new Error("Stop the bot before changing its target");
       const connection = this.connections.find(
@@ -150,6 +162,7 @@ export class ConnectionsService {
       );
       if (
         !connection ||
+        (this.botDex && this.botDex(botId) !== connection.adapterId) ||
         !connection.accounts.some((item) => item.id === input.target.accountId)
       )
         throw new Error("Select an account belonging to this connection");
@@ -165,7 +178,7 @@ export class ConnectionsService {
       let freshAccount = false;
       if (connection) {
         try {
-          authorized = !!(await this.authorization?.verify(connection, false));
+          authorized = !!(await this.adapter(connection).verify?.(connection));
         } catch {}
         try {
           const adapter = this.adapters.find(
@@ -188,6 +201,7 @@ export class ConnectionsService {
           throw new Error("Validate the current workflow first");
         if (!view.target) throw new Error("Save an execution target first");
         validateFlowTarget(draft.document, view.target, connection?.environment);
+        if (connection && draft.document.nodes.some(node => node.type === 'strategy.dca') && !this.adapter(connection).descriptor.capabilities.nativeProtection) throw new Error('This workflow requires exchange-native protection unavailable on this adapter');
         runtime = true;
         runtimeDetail = draft.document.nodes.some(node => node.type === "strategy.directional") ? "Testnet Long/Short · Exits checked at each evaluation while app is open; no exchange-native stop" : "Market IOC · Native exchange TP/SL for DCA";
       } catch (error) {
@@ -202,16 +216,10 @@ export class ConnectionsService {
         freshAccount &&
         runtime &&
         connection &&
-        view.target &&
-        this.authorization
+        view.target
       ) {
         try {
-          const key = await this.authorization.executionKey(connection);
-          const snapshot = await new HyperliquidFlowVenue(
-            connection,
-            view.target,
-            key,
-          ).snapshot([]);
+          const snapshot = await (await this.venue(connection, view.target)).snapshot([]);
           if (this.runner.foreignOrders(botId, snapshot))
             throw new Error("Resolve unrelated open orders first");
           if (snapshot.available <= 0)
@@ -261,14 +269,23 @@ export class ConnectionsService {
   }
   async command(raw: unknown): Promise<ConnectionsView> {
     const input = ConnectionCommandSchema.parse(raw);
+    if (input.action === 'connect_api_key') {
+      if (this.connections.length >= 100) throw new Error('Connection limit reached');
+      const adapter = this.adapters.find(item => item.descriptor.id === input.adapterId);
+      if (!adapter?.connectApiKey) throw new Error('API key connection unavailable');
+      if (this.connections.some(item => item.adapterId === input.adapterId && item.environment === input.environment && item.owner === String(input.accountIndex))) throw new Error('This account is already connected');
+      const connected = await adapter.connectApiKey({ ...input, id: randomUUID() });
+      if (this.connections.some(item => item.adapterId === input.adapterId && item.environment === input.environment && item.owner === String(input.accountIndex))) throw new Error('This account is already connected');
+      this.save([...this.connections, connected]);
+      return this.view();
+    }
     if (input.action === 'close_flow_position') {
       const deployment = this.runner.get(input.botId);
       if (!deployment || deployment.id !== input.deploymentId || !deployment.closePositionSupported) throw new Error('Supported deployment unavailable');
       if (input.confirmation !== `CLOSE ${deployment.target.market}`) throw new Error('Exact market confirmation required');
       const connection = this.connections.find(item => item.id === deployment.target.connectionId);
-      if (!connection || !this.authorization) throw new Error('Saved connection unavailable');
-      const key = await this.authorization.executionKey(connection);
-      return { ...this.view(), deployment: await this.runner.closePosition(input.botId, input.deploymentId, input.confirmation, new HyperliquidFlowVenue(connection, deployment.target, key)) };
+      if (!connection) throw new Error('Saved connection unavailable');
+      return { ...this.view(), deployment: await this.runner.closePosition(input.botId, input.deploymentId, input.confirmation, await this.venue(connection, deployment.target)) };
     }
     if (input.action === 'set_flow_entries_paused') return { ...this.view(), deployment: this.runner.setEntriesPaused(input.botId, input.deploymentId, input.paused) };
     if (input.action === 'get_flow_audit_summary') return { ...this.view(), auditSummary: this.runner.auditSummary(input.botId) };
@@ -317,18 +334,17 @@ export class ConnectionsService {
       const connection = this.connections.find(
         (item) => item.id === deployment?.target.connectionId,
       );
-      if (!deployment || !connection || !this.authorization)
+      if (!deployment || !connection)
         throw new Error("Saved deployment unavailable");
       if (this.botExists && !this.botExists(input.botId))
         throw new Error("Bot no longer exists. Reload the bot list.");
       this.reconciling.set(input.botId, connection.id);
       try {
-        const key = await this.authorization.executionKey(connection);
         return {
           ...this.view(),
           deployment: await this.runner.reconcile(
             input.botId,
-            new HyperliquidFlowVenue(connection, deployment.target, key),
+            await this.venue(connection, deployment.target),
           ),
         };
       } finally {
@@ -355,17 +371,18 @@ export class ConnectionsService {
         if (
           !target ||
           !connection ||
+          (this.botDex && this.botDex(input.botId) !== connection.adapterId) ||
           !draft ||
           draft.status !== "valid" ||
           draft.version !== input.version ||
           !connection.accounts.some((item) => item.id === target.accountId)
         )
           throw new Error("Reload and validate the workflow and target");
+        if (!this.executionEnvironmentAllowed(connection.environment)) throw new Error('EXECUTION_NOT_AVAILABLE');
         if (input.confirmation !== `${connection.environment}:${target.market}`)
           throw new Error("Network and market confirmation required");
-        if (connection.adapterId !== "hyperliquid" || !this.authorization)
-          throw new Error("Execution adapter unavailable");
-        const key = await this.authorization.executionKey(connection);
+        const venue = await this.venue(connection, target);
+        if (draft.document.nodes.some(node => node.type === 'strategy.dca') && !venue.protection) throw new Error('This workflow requires exchange-native protection unavailable on this adapter');
         return {
           ...this.view(),
           deployment: await this.runner.start(
@@ -374,7 +391,7 @@ export class ConnectionsService {
             draft.document,
             target,
             connection.environment,
-            new HyperliquidFlowVenue(connection, target, key),
+            venue,
           ),
         };
       } finally {
@@ -404,8 +421,14 @@ export class ConnectionsService {
           "Stop bots on this connection before changing or checking authorization",
         );
       const connection = this.connections.find((item) => item.id === input.id);
-      if (!connection || !this.authorization)
+      if (!connection)
         throw new Error("Secure authorization unavailable");
+      if (input.action === 'verify_authorization') {
+        const valid = !!(await this.adapter(connection).verify?.(connection));
+        this.save(this.connections.map(item => item.id === connection.id ? { ...item, permission: valid ? 'trading-authorized' : 'view-only', authorizationCheckedAt: new Date().toISOString() } : item));
+        return this.view();
+      }
+      if (!this.authorization) throw new Error('Secure authorization unavailable');
       if (input.action === "prepare_authorization")
         return {
           ...this.view(),
@@ -476,7 +499,7 @@ export class ConnectionsService {
             if (!checks.has(key))
               checks.set(
                 key,
-                adapter.activity(account.address, connection.environment),
+                adapter.activity(account.address, connection.environment, connection),
               );
           }
           const activity = await Promise.all(checks.values());
@@ -562,6 +585,7 @@ export class ConnectionsService {
       name: source.name,
       environment: source.environment,
       owner,
+      ...(existing?.apiKeyIndex === undefined ? {} : { apiKeyIndex: existing.apiKeyIndex }),
       permission: existing?.permission ?? duplicate?.permission ?? "view-only",
       authorizationCheckedAt:
         existing?.authorizationCheckedAt ?? duplicate?.authorizationCheckedAt,

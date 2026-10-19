@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { lighterSnapshot } from '../connections/lighter/market-data';
+import { LighterClient } from '../connections/lighter/client';
 import { StaleMarketDataError } from './market-data-error';
 import { MarketSnapshotRequestSchema, type MarketSnapshot } from '@catbots/contracts';
 const numeric = z.union([z.string().min(1), z.number()]).transform(Number).pipe(z.number().finite());
@@ -6,6 +8,7 @@ const positive = numeric.pipe(z.number().positive());
 const candle = z.object({ t: z.number().int(), T: z.number().int(), s: z.string(), i: z.string(), o: positive, h: positive, l: positive, c: positive, v: numeric.pipe(z.number().nonnegative()) });
 export async function fetchMarketSnapshot(input: unknown, request: typeof fetch = fetch): Promise<MarketSnapshot> {
   const args = MarketSnapshotRequestSchema.parse(input);
+  if (args.dex === 'lighter') return lighterSnapshot(new LighterClient(args.environment ?? 'production', request), args.market, args.timeframes);
   const coin = args.market.replace(/-PERP$/, '');
   const at = Date.now();
   async function info(body: unknown): Promise<unknown> {

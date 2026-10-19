@@ -7,3 +7,10 @@ export const strategyLabCapabilities: ProductCapabilities = ProductCapabilitiesS
   liveExecution: false,
   exchangeConnections: false,
 });
+
+export const localAppCapabilities: ProductCapabilities = ProductCapabilitiesSchema.parse({
+  ...strategyLabCapabilities,
+  release: 'testnet-alpha',
+  testnetExecution: true,
+  exchangeConnections: true,
+});

@@ -2,12 +2,13 @@ import { z } from 'zod';
 import type { FlowBacktestSettings } from '@catbots/contracts';
 import { flowHistoryRequirements, intervalMs, type HistoricalFlowData, type FlowDocument } from '@catbots/strategy-runtime';
 import { BacktestCache, hash } from './cache';
+import { loadLighterHistory } from './lighter-history';
 const numeric=z.union([z.string().min(1),z.number()]).transform(Number).pipe(z.number().finite());
 const price=numeric.pipe(z.number().positive());
 const row=z.object({t:z.number().int(),T:z.number().int(),s:z.string(),i:z.string(),o:price,h:price,l:price,c:price,v:numeric.pipe(z.number().nonnegative())});
 export class HistoricalFlowLoader {
   private inflight = new Map<string, Promise<HistoricalFlowData>>();
-  constructor(private cache:BacktestCache,private request:typeof fetch=fetch) {}
+  constructor(private cache:BacktestCache,private request:typeof fetch=fetch,private dex:'hyperliquid'|'lighter'='hyperliquid') {}
   async load(document:FlowDocument,settings:FlowBacktestSettings,signal:AbortSignal,refresh=false):Promise<HistoricalFlowData> {
     signal.throwIfAborted();
     const key=hash({market:settings.market,from:settings.from,to:settings.to,counts:flowHistoryRequirements(document,settings),refresh});
@@ -20,8 +21,12 @@ export class HistoricalFlowLoader {
   private async fetchData(document:FlowDocument,settings:FlowBacktestSettings,signal:AbortSignal,refresh=false):Promise<HistoricalFlowData> {
     const counts=flowHistoryRequirements(document,settings), from=Date.parse(settings.from),to=Date.parse(settings.to),coin=settings.market.replace(/-PERP$/,'');
     if(to>Date.now()) throw new Error('Backtest end must be in the past');
-    const key=hash({provider:'hyperliquid-history-v1',market:settings.market,from,to,counts});
+    const key=hash({provider:`${this.dex}-history-v1`,market:settings.market,from,to,counts});
     if(!refresh){const cached=await this.cache.get<HistoricalFlowData>(key,3600000);if(cached) return cached;}
+    if(this.dex==='lighter') {
+      const data=await loadLighterHistory(settings.market,from,to,counts,signal,this.request);
+      signal.throwIfAborted();await this.cache.set(key,data).catch(()=>{});return data;
+    }
     const info=async(body:unknown):Promise<unknown>=>{
       for(let attempt=0;attempt<3;attempt++){
         signal.throwIfAborted();

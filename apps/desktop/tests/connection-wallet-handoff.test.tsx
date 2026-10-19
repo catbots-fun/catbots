@@ -10,7 +10,7 @@ it('opens a scoped signing page without an injected wallet and picks up approval
  let opened=false;
  const command=vi.fn(async(input:{action:string})=>{
   if(input.action==='open_wallet_browser')opened=true;
-  return {adapters:[],connections:[opened?{...connection,permission:'trading-authorized' as const,authorizationCheckedAt:new Date().toISOString()}:connection]};
+  return {adapters:[{id:'hyperliquid',name:'Hyperliquid',environments:['testnet' as const],authentication:['wallet' as const],capabilities:{accountDiscovery:true,markets:['perpetual'],trading:true}}],connections:[opened?{...connection,permission:'trading-authorized' as const,authorizationCheckedAt:new Date().toISOString()}:connection]};
  });
  render(<ConnectionsScreen api={{command}}/>);
  await userEvent.click(await screen.findByRole('button',{name:'Manage connection'}));

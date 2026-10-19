@@ -26,7 +26,7 @@ export type AuditTraceIdentity = Readonly<{
   idempotencyKey: string;
   parentTraceId?: string;
   market?: string;
-  dex?: 'hyperliquid';
+  dex?: 'hyperliquid' | 'lighter';
   universeRevision?: string;
   contextObservedAt?: string;
   createdAt: string;
@@ -41,7 +41,7 @@ export type StoredAuditTrace = Readonly<{
   traceId: string;
   parentTraceId: string | null;
   market: string | null;
-  dex: 'hyperliquid' | null;
+  dex: 'hyperliquid' | 'lighter' | null;
   universeRevision: string | null;
   contextObservedAt: string | null;
   dataReferences: readonly AuditDataReference[];
@@ -714,7 +714,7 @@ export class ExecutionRepository {
     updatedAt: string;
     parentTraceId: string | null;
     market: string | null;
-    dex: 'hyperliquid' | null;
+    dex: 'hyperliquid' | 'lighter' | null;
     universeRevision: string | null;
     contextObservedAt: string | null;
   }>): void {
@@ -744,7 +744,7 @@ export class ExecutionRepository {
       traceId: row.id,
       parentTraceId: typeof row.parent_trace_id === 'string' ? row.parent_trace_id : null,
       market: typeof row.market === 'string' ? row.market : null,
-      dex: row.dex === 'hyperliquid' ? row.dex : null,
+      dex: row.dex === 'hyperliquid' || row.dex === 'lighter' ? row.dex : null,
       universeRevision: typeof row.universe_revision === 'string' ? row.universe_revision : null,
       contextObservedAt: typeof row.context_observed_at === 'string' ? row.context_observed_at : null,
       dataReferences: events.find(({ dataReferences }) => dataReferences !== undefined)?.dataReferences ?? [],
@@ -884,7 +884,7 @@ function parseStoredJson(value: unknown): unknown {
 type PersistedAuditIdentity = Readonly<{
   parentTraceId?: string;
   market?: string;
-  dex?: 'hyperliquid';
+  dex?: 'hyperliquid' | 'lighter';
   universeRevision?: string;
   contextObservedAt?: string;
   dataReferences?: AuditDataReference[];

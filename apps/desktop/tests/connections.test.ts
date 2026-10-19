@@ -110,7 +110,7 @@ it('shares account snapshots across bots without assigning manual orders to a bo
  for(const botId of botIds)await service.command({action:'save_target',target:{botId,connectionId:connected.connections[0].id,accountId:'sub',market:'SOL-PERP',maxPositionUsd:50,maxOrderUsd:20}});
  const view=await service.command({action:'bot_overview',botIds});
  expect(activity).toHaveBeenCalledTimes(1);
- expect(activity).toHaveBeenCalledWith('sub','testnet');
+ expect(activity).toHaveBeenCalledWith('sub','testnet',expect.objectContaining({adapterId:'test'}));
  expect(view.botOverview?.[0]).toMatchObject({environment:'testnet',activity:{orders:[{id:'123'}]}});
  expect(view.botOverview?.[0].deployment).toBeUndefined();
  await service.command({action:'bot_overview',botIds});expect(activity).toHaveBeenCalledTimes(1);
@@ -220,14 +220,14 @@ it('removes seven orphan targets with stale terminal records after one fresh fla
  const targets=botIds.map(botId=>({botId,connectionId:connected.connections[0].id,accountId:'sub',market:'ETH-PERP',maxPositionUsd:500,maxOrderUsd:100}));
  for(const target of targets) await setup.command({action:'save_target',target});
  await setup.dispose();
- const records=Object.fromEntries(targets.slice(0,3).map((target,index)=>[target.botId,{view:{id:`deployment-${index}`,botId:target.botId,version:1,environment:'testnet',target,status:index===1?'failed':'stopped',startedAt:'2026-10-18T00:00:00.000Z',cycles:0,orders:[],events:[],...(index<2?{position:0.14}:{})},document:{nodes:[],edges:[]},target,state:{},fills:[],lastBucket:-1,...(index<2?{expectedPosition:0.14}:{pending:'0xdeadbeef'})}]));
+ const records=Object.fromEntries(targets.slice(0,3).map((target,index)=>[target.botId,{view:{id:`deployment-${index}`,botId:target.botId,version:1,environment:'testnet',target,status:index===1?'failed':'stopped',startedAt:'2026-10-18T00:00:00.000Z',cycles:0,orders:[],events:[],...(index<2?{position:0.14}:{})},document:{nodes:[],edges:[]},target,state:{},fills:[],lastBucket:-1,...(index<2?{expectedPosition:0.14}:{})}]));
  writeFileSync(`${path}.runtime`,JSON.stringify(records));
  const restarted=new ConnectionsService(path,[adapter],undefined,undefined,undefined,()=>false);
 
  await expect(restarted.command({action:'remove',id:connected.connections[0].id})).resolves.toMatchObject({connections:[]});
  expect(JSON.parse(readFileSync(`${path}.targets`,'utf8'))).toEqual({});
  expect(JSON.parse(readFileSync(`${path}.runtime`,'utf8'))).toEqual({});
- expect(activity).toHaveBeenCalledExactlyOnceWith('account-address','testnet');
+ expect(activity).toHaveBeenCalledExactlyOnceWith('account-address','testnet',expect.objectContaining({adapterId:'hyperliquid'}));
  await restarted.dispose();
 });
 
@@ -326,6 +326,7 @@ it('marks startup active before awaiting authorization so bot deletion cannot ra
  const path=file(),botId='00000000-0000-4000-8000-000000000018';
  let rejectAuthorization!:(error:Error)=>void;
  const authorization={executionKey:()=>new Promise<never>((_resolve,reject)=>{rejectAuthorization=reject;})};
+ adapter.createVenue=()=>authorization.executionKey();
  const draft={botId,version:1,status:'valid' as const,document:{nodes:[],edges:[]},updatedAt:'2026-10-18T00:00:00.000Z'};
  let exists=true;
  const service=new ConnectionsService(path,[adapter],authorization as never,undefined,()=>draft as never,()=>exists);
@@ -363,6 +364,7 @@ it('blocks connection removal throughout credential acquisition and runner recon
  const path=file(),botId='00000000-0000-4000-8000-000000000046';
  let resolveKey!:(key:`0x${string}`)=>void,resolveRunner!:(value:undefined)=>void,exists=true;
  const authorization={executionKey:()=>new Promise<`0x${string}`>(resolve=>{resolveKey=resolve;})};
+ adapter.createVenue=async()=>{await authorization.executionKey();return {snapshot:async()=>{throw new Error('unused');},place:async()=>null};};
  const setup=new ConnectionsService(path,[adapter],authorization as never,undefined,undefined,()=>exists);
  const connected=await setup.command({action:'connect',adapterId:'hyperliquid',name:'A',environment:'testnet',owner:'owner'});
  const target={botId,connectionId:connected.connections[0].id,accountId:'sub',market:'ETH-PERP',maxPositionUsd:500,maxOrderUsd:100};
@@ -381,6 +383,8 @@ it('blocks connection removal throughout credential acquisition and runner recon
  await expect(service.command({action:'remove',id:connected.connections[0].id})).rejects.toThrow('active or unresolved');
  resolveRunner(undefined);
  await expect(reconciling).resolves.toMatchObject({deployment:undefined});
- await expect(service.command({action:'remove',id:connected.connections[0].id})).resolves.toMatchObject({connections:[]});
+ // A mocked/no-evidence reconciliation must not release the pending intent,
+ // even after the bot disappeared and the account currently looks flat.
+ await expect(service.command({action:'remove',id:connected.connections[0].id})).rejects.toThrow('Cannot remove an active runtime record');
  await service.dispose();
 });

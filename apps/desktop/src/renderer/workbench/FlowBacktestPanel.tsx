@@ -7,7 +7,7 @@ import { EquityCurve } from './EquityCurve';
 const money=(value:number)=>value.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
 const stamp=(value:string)=>value.slice(0,16);
 function defaults():FlowBacktestSettings { const to=Math.floor(Date.now()/3600000)*3600000;return {market:'ETH-PERP',from:new Date(to-7*86400000).toISOString(),to:new Date(to).toISOString(),timeframe:'1h',startingCapital:10000,feeBps:3.5,slippageBps:1}; }
-export function FlowBacktestPanel({draft,api,workspaceMarket='ETH-PERP',disabled=false}:{workspaceMarket?:string;draft:ChatFlowDraft;api?:CatbotsDesktopApi['nodes'];disabled?:boolean}) {
+export function FlowBacktestPanel({draft,api,workspaceMarket='ETH-PERP',disabled=false,dex='hyperliquid'}:{dex?:'hyperliquid'|'lighter';workspaceMarket?:string;draft:ChatFlowDraft;api?:CatbotsDesktopApi['nodes'];disabled?:boolean}) {
   const [settings,setSettings]=useState(() => ({...defaults(), market: workspaceMarket})),[refresh,setRefresh]=useState(false),[job,setJob]=useState<FlowBacktestJob|null>(null),[error,setError]=useState(''),[starting,setStarting]=useState(false),[page,setPage]=useState(0);
   const [overrideMarket,setOverrideMarket]=useState(false);
   const [settingsOpen,setSettingsOpen]=useState(true),[resultTab,setResultTab]=useState('overview');
@@ -31,7 +31,7 @@ export function FlowBacktestPanel({draft,api,workspaceMarket='ETH-PERP',disabled
     <LayerCard className="backtest-setup">
       <div className="backtest-setup-heading"><div><h3>Run settings</h3><p className="backtest-muted">{settings.market} · {settings.timeframe} candles · ${money(settings.startingCapital)} starting capital</p></div><Button size="sm" variant="secondary" icon={SlidersHorizontalIcon} aria-expanded={settingsOpen} aria-controls="backtest-settings" onClick={()=>setSettingsOpen(!settingsOpen)}>{settingsOpen?'Hide settings':'Edit settings'}</Button></div>
       <div id="backtest-settings" hidden={!settingsOpen}>
-      <p className="backtest-muted">Hyperliquid Mainnet historical data · Simulation only. Dates are UTC; the end time is exclusive.</p>
+      <p className="backtest-muted">{dex==='lighter'?'Lighter':'Hyperliquid'} Mainnet historical data · Simulation only. Dates are UTC; the end time is exclusive.</p>
     <div className="provider-actions"><Badge variant="secondary">{settings.market} · {overrideMarket ? 'Backtest override' : 'From workspace'}</Badge><Switch label="Test a different market" checked={overrideMarket} disabled={busy} onCheckedChange={setOverrideMarket}/></div>
     <div className="backtest-assumption-form">{overrideMarket && <MarketPicker api={api} label="Backtest market only" value={settings.market} disabled={busy} onChange={market=>setSettings({...settings,market})}/>}
       <Input size="base" label="From (UTC)" type="datetime-local" value={stamp(settings.from)} disabled={busy} onChange={event=>setSettings({...settings,from:event.target.value?`${event.target.value}:00.000Z`:''})}/>
@@ -68,7 +68,7 @@ export function FlowBacktestPanel({draft,api,workspaceMarket='ETH-PERP',disabled
           <p className="backtest-muted">Engine, data fingerprints and settings for reproducing this run.</p>
           <CodeBlock lang="jsonc" code={JSON.stringify({engine:result.engineVersion,flowHash:result.flowHash,dataHash:result.dataHash,fetchedAt:result.dataset.fetchedAt,settings:result.settings},null,2)}/>
         </Collapsible.Panel></Collapsible.Root>
-      </div>}</>:!busy&&<LayerCard className="backtest-empty"><h3>Test your saved flow on historical data</h3><p>Up to 5,000 recent candles per interval, including indicator warm-up. Missing history stops the run; results are never substituted with sample data.</p></LayerCard>}
+      </div>}</>:!busy&&<LayerCard className="backtest-empty"><h3>Test your saved flow on historical data</h3><p>{dex==='lighter'?'Paginated Lighter history, up to 100,000 candles per interval':'Up to 5,000 recent candles per interval'}, including indicator warm-up. Missing history stops the run; results are never substituted with sample data.</p></LayerCard>}
   </section>;
 }
 

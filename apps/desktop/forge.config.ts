@@ -129,6 +129,7 @@ const config: ForgeConfig = {
     icon: 'assets/icon.icns',
     asar: true,
     extraResource: [
+      'assets/lighter',
       'assets/trayTemplate.png',
       'assets/catbots',
       'assets/fun.catbots.web.plist.template',

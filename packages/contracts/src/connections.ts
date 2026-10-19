@@ -8,6 +8,7 @@ export type AdapterDescriptor = {
     accountDiscovery: boolean;
     markets: string[];
     trading: boolean;
+    nativeProtection?: boolean;
   };
 };
 export const TradingAccountSchema = z.object({
@@ -27,6 +28,7 @@ export const ExchangeConnectionSchema = z.object({
   name: z.string(),
   environment: z.enum(["production", "testnet"]),
   owner: z.string(),
+  apiKeyIndex: z.number().int().min(0).max(254).optional(),
   permission: z.enum(["view-only", "trading-authorized"]),
   authorizationCheckedAt: z.string().datetime().optional(),
   accounts: z.array(TradingAccountSchema),
@@ -60,6 +62,7 @@ export type ExecutionTargetView = {
 };
 
 export const ConnectionCommandSchema = z.discriminatedUnion("action", [
+  z.object({ action: z.literal('connect_api_key'), adapterId: z.string().min(1).max(64), name: z.string().trim().min(1).max(80), environment: z.enum(['production','testnet']), accountIndex: z.number().int().min(0).max(2 ** 48 - 1), apiKeyIndex: z.number().int().min(4).max(254), apiPrivateKey: z.string().regex(/^(?:0x)?[a-fA-F0-9]{80}$/) }).strict(),
   z.object({ action: z.literal('get_flow_audit_summary'), botId: z.string().uuid() }).strict(),
   z.object({
     action: z.literal("get_flow_audit"),

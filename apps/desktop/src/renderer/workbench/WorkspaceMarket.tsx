@@ -4,9 +4,10 @@ import type { CatbotsDesktopApi } from '@catbots/contracts';
 import type { FlowWorkspaceState } from './flow-workspace-state';
 
 /** Saved research context. Trading deployments keep their own pinned target. */
-export function WorkspaceMarket({ botId, api, connectionsApi, workspace, disabled }: {
+export function WorkspaceMarket({ botId, api, connectionsApi, workspace, disabled, dex = 'hyperliquid' }: {
   botId: string; api?: CatbotsDesktopApi['nodes']; connectionsApi?: CatbotsDesktopApi['connections'];
   workspace: FlowWorkspaceState; disabled?: boolean;
+  dex?: 'hyperliquid'|'lighter';
 }) {
   const [attempt, setAttempt] = useState(0);
   const [saved, setSaved] = useState(''), [selected, setSelected] = useState(workspace.market);
@@ -38,14 +39,14 @@ export function WorkspaceMarket({ botId, api, connectionsApi, workspace, disable
     finally { setLoading(false); }
   };
   return <div className="workspace-market-control">
-    <Button size="sm" variant="secondary" disabled={loading || disabled || workspace.running || !api} aria-label="Change design and test market" title="Design and test market · Hyperliquid Mainnet data" onClick={() => { setSelected(workspace.market); setSearch(''); setEditing(true); void loadCatalog(); }}>
+    <Button size="sm" variant="secondary" disabled={loading || disabled || workspace.running || !api} aria-label="Change design and test market" title={`Design and test market · ${dex === 'lighter' ? 'Lighter' : 'Hyperliquid'} Mainnet data`} onClick={() => { setSelected(workspace.market); setSearch(''); setEditing(true); void loadCatalog(); }}>
       {loading ? 'Loading market…' : `${workspace.market} · Simulation${error ? ' · !' : ''}`}
     </Button>
     <Dialog.Root open={editing} onOpenChange={setEditing}>
       <Dialog className="workbench-approval-dialog market-settings-dialog">
         <Dialog.Title>Design & test market</Dialog.Title>
         <Dialog.Description>All node tests and new backtests use this market. Trading targets are set separately in Deploy.</Dialog.Description>
-        <div className="provider-actions"><Badge variant="secondary">Hyperliquid · Perpetual</Badge><Badge variant="info">Mainnet data · Simulation</Badge></div>
+        <div className="provider-actions"><Badge variant="secondary">{dex === 'lighter' ? 'Lighter' : 'Hyperliquid'} · Perpetual</Badge><Badge variant="info">Mainnet data · Simulation</Badge></div>
         {!saved && !loading && <p className="backtest-muted">This session uses {workspace.market}. Save to remember your choice for this bot.</p>}
         <Input size="base" label="Search markets" placeholder="Search SOL, BTC, ETH…" value={search} onChange={event => setSearch(event.target.value)} />
         <Select size="base" label="Market" value={selected} renderValue={value => String(value)} onValueChange={value => setSelected(String(value))}>

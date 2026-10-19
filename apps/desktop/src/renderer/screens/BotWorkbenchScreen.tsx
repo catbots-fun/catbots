@@ -2,7 +2,7 @@ import { WorkspaceMarket } from '../workbench/WorkspaceMarket';
 import { FlowExecutionResults } from '../workbench/FlowExecutionResults';
 import { ExecutionTargetPanel } from '../workbench/ExecutionTargetPanel';
 import { FlowBacktestPanel } from '../workbench/FlowBacktestPanel';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useMemo } from 'react';
 import { ChatCircleIcon, SidebarSimpleIcon } from '@phosphor-icons/react';
 import '../workbench/workspace.css';
 import { Badge, Banner, Button, LayerCard, Tabs } from '@cloudflare/kumo';
@@ -32,7 +32,8 @@ export type BotWorkbenchScreenProps = Readonly<{
   onOpenSettings?(): void;
 }>;
 
-export function BotWorkbenchScreen({ bot, api, nodeApi, connectionsApi, deploymentApi, capabilities, onBack, onOpenSettings }: BotWorkbenchScreenProps) {
+export function BotWorkbenchScreen({ bot, api, nodeApi: sourceNodeApi, connectionsApi, deploymentApi, capabilities, onBack, onOpenSettings }: BotWorkbenchScreenProps) {
+  const nodeApi = useMemo(() => sourceNodeApi ? { ...sourceNodeApi, command: (command: Parameters<NonNullable<CatbotsDesktopApi['nodes']>['command']>[0]) => sourceNodeApi.command(command.action === 'market_catalog' || command.action === 'market_snapshot' ? { ...command, dex: bot.dex } : command) } : undefined, [sourceNodeApi, bot.dex]);
   const flowWorkspace = useFlowWorkspaceState(false);
   const [state, setState] = useState<WorkbenchState | null>(null);
   const [selectedNode, setSelectedNode] = useState<StrategyRevision['nodes'][number] | null>(null);
@@ -245,7 +246,7 @@ export function BotWorkbenchScreen({ bot, api, nodeApi, connectionsApi, deployme
           ...(paperExecutionEnabled || liveDeployment !== null || deployment !== null ? [{ value: 'performance', label: 'Performance' }] : []),
           ...(state.flowDraft || paperExecutionEnabled || liveDeployment !== null || deployment !== null ? [{ value: 'logs', label: 'Logs' }] : []),
         ]} value={tab} onValueChange={setTab} variant="underline" />
-      {state.flowDraft && <WorkspaceMarket botId={bot.id} api={nodeApi} connectionsApi={connectionsApi} workspace={flowWorkspace} disabled={sending} />}
+      {state.flowDraft && <WorkspaceMarket dex={bot.dex} botId={bot.id} api={nodeApi} connectionsApi={connectionsApi} workspace={flowWorkspace} disabled={sending} />}
         <Button size="sm" variant="ghost" icon={ChatCircleIcon} title={showChat ? 'Hide chat' : 'Show chat'} aria-label={showChat ? 'Hide chat' : 'Show chat'} aria-pressed={showChat} aria-controls="workbench-chat" onClick={() => setShowChat(!showChat)}></Button>
         <Button size="sm" variant="ghost" icon={SidebarSimpleIcon} disabled={tab !== 'flow' || !!state.flowDraft} title={showInspector ? 'Hide inspector' : 'Show inspector'} aria-label={showInspector ? 'Hide inspector' : 'Show inspector'} aria-pressed={inspectorVisible} aria-controls="workbench-inspector" onClick={() => setShowInspector(!showInspector)}></Button>
       </div>
@@ -253,7 +254,7 @@ export function BotWorkbenchScreen({ bot, api, nodeApi, connectionsApi, deployme
 
           {tab === 'performance' ? state.flowDraft ? <FlowExecutionResults botId={bot.id} api={connectionsApi}/> : <PaperPerformance deployment={deployment} />
             : tab === 'logs' ? state.flowDraft ? <FlowExecutionResults botId={bot.id} api={connectionsApi} logs/> : <PaperLogs deployment={deployment} />
-            : tab === 'deploy' ? <ExecutionTargetPanel directional={state.flowDraft?.document.nodes.some(node => node.type === 'strategy.directional')} nodeApi={nodeApi} workspaceMarket={flowWorkspace.market} version={state.flowDraft?.version} botId={bot.id} api={connectionsApi} />
+            : tab === 'deploy' ? <ExecutionTargetPanel dex={bot.dex} directional={state.flowDraft?.document.nodes.some(node => node.type === 'strategy.directional')} nodeApi={nodeApi} workspaceMarket={flowWorkspace.market} version={state.flowDraft?.version} botId={bot.id} api={connectionsApi} />
             : tab === 'flow' ? (
             state.flowDraft ? <ChatFlowGraph onValidate={nodeApi ? async () => { const result = await nodeApi.command({ action: 'validate_flow', botId: bot.id, baseVersion: state.flowDraft!.version }); if (result.flowDraft) setState(previous => previous ? { ...previous, flowDraft: result.flowDraft } : previous); } : undefined} workspace={flowWorkspace} nodeApi={nodeApi} draft={state.flowDraft} disabled={sending || !flowWorkspace.marketReady} onSave={nodeApi ? async (node) => {
                 const result = await nodeApi.command({ action: 'edit_flow', botId: bot.id, edit: { baseVersion: state.flowDraft!.version, operation: { type: 'upsert_node', node } } });
@@ -261,7 +262,7 @@ export function BotWorkbenchScreen({ bot, api, nodeApi, connectionsApi, deployme
               } : undefined} /> : state.currentRevision === null
               ? <LayerCard className="workbench-empty"><h2>Start with a requirement</h2><p>Tell Catbots AI when to evaluate, which conditions to combine, and what action to take.</p></LayerCard>
               : <StrategyGraph revision={state.currentRevision} onSelectNode={(node) => { setSelectedNode(node); setShowInspector(true); }} />
-          ) : state.flowDraft ? <FlowBacktestPanel workspaceMarket={flowWorkspace.market} key={bot.id} draft={state.flowDraft} api={nodeApi} disabled={sending || !flowWorkspace.marketReady || !!Object.keys(flowWorkspace.edits).length} /> : state.currentRevision === null
+          ) : state.flowDraft ? <FlowBacktestPanel dex={bot.dex} workspaceMarket={flowWorkspace.market} key={bot.id} draft={state.flowDraft} api={nodeApi} disabled={sending || !flowWorkspace.marketReady || !!Object.keys(flowWorkspace.edits).length} /> : state.currentRevision === null
             ? <LayerCard className="workbench-empty"><h2>Create a strategy first</h2><p>A valid revision is required before a Backtest can run.</p></LayerCard>
             : <BacktestPanel
                 key={state.currentRevision.version}

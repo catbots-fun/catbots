@@ -770,6 +770,7 @@ export class FlowRunner {
         ([botId, record]) =>
           this.active.has(botId) ||
           this.reconciling.has(botId) ||
+          record.pending !== undefined ||
           ['running', 'stopping', 'interrupted'].includes(record.view.status),
       )
     )

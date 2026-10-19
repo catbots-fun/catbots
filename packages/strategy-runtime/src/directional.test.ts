@@ -29,3 +29,10 @@ it('accepts partial entry cancellation and only exits the confirmed quantity',()
  const next=def.evaluate(input(),config,{...ctx(60000),price:90,fills:[{id:'part',clientOrderId:order.clientOrderId,side:'buy',quantity:.4,price:100,fee:.018}],cancelledOrderIds:[order.clientOrderId]},first.state,'strategy');
  expect(next.orders![0]).toMatchObject({quantity:.4,reduceOnly:true,side:'sell'});
 });
+it('does not restart the holding deadline when an entry fill is recovered late',()=>{
+ const first=def.evaluate(input(),config,ctx(60000),undefined,'strategy');
+ const order=first.orders![0];
+ const recovered=def.evaluate(input(),config,{...ctx(31*60000),fills:[{id:'recovered-entry',clientOrderId:order.clientOrderId,side:'buy',quantity:1,price:100,fee:0}]},JSON.parse(JSON.stringify(first.state)),'strategy');
+ expect(recovered.orders).toHaveLength(1);
+ expect(recovered.orders![0]).toMatchObject({side:'sell',quantity:1,reduceOnly:true,purpose:'exit'});
+});

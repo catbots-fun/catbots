@@ -22,6 +22,7 @@ import { denyUnexpectedNavigation } from '../src/main/create-window';
 import { ConfigRepository } from '../src/main/config/config-repository';
 import { assertTrustedAppSenderUrl } from '../src/main/ipc-security';
 import { createIpcHandlers, registerIpcHandlers, type IpcHandlerDependencies } from '../src/main/ipc/register-ipc';
+import { createApplicationHandlers } from '../src/main/ipc/application-handlers';
 import { getSafeRelativePath } from '../src/main/register-app-protocol';
 import { BotRepository } from '../src/main/bots/bot-repository';
 import { ConnectionsService } from '../src/main/connections/service';
@@ -284,6 +285,29 @@ function createDependencies() {
     testLlmConnection: vi.fn(async () => ({ ok: true as const, model: 'provider/model' })),
   };
 }
+
+it('rejects flow starts when connections are available but live execution is disabled', async () => {
+  const dependencies = createDependencies();
+  dependencies.capabilities.liveExecution = false;
+  const handlers = createApplicationHandlers(dependencies);
+  await expect(handlers.connectionCommand({ action: 'start_flow', botId: '00000000-0000-4000-8000-000000000001', version: 1, confirmation: 'testnet:ETH-PERP' })).rejects.toThrow('EXECUTION_NOT_AVAILABLE');
+});
+
+it.each(['production', undefined])('does not let Testnet-only capability start a %s target', async environment => {
+  const dependencies=createDependencies();
+  dependencies.capabilities.liveExecution=false;
+  dependencies.capabilities.testnetExecution=true;
+  dependencies.connections={command:async()=>({adapters:[],connections:[],executionTarget:{target:null,ready:false,environment}})} as unknown as NonNullable<IpcHandlerDependencies['connections']>;
+  await expect(createApplicationHandlers(dependencies).connectionCommand({action:'start_flow',botId:'00000000-0000-4000-8000-000000000001',version:1,confirmation:'production:SOL-PERP'})).rejects.toThrow('EXECUTION_NOT_AVAILABLE');
+});
+
+it('routes a Testnet flow start when only Testnet execution is enabled', async () => {
+  const dependencies=createDependencies();
+  dependencies.capabilities.liveExecution=false;
+  dependencies.capabilities.testnetExecution=true;
+  dependencies.connections={command:async(command:{action:string})=> command.action==='get_target'?{adapters:[],connections:[],executionTarget:{target:null,ready:false,environment:'testnet'}}:{adapters:[],connections:[],deployment:{id:'testnet-run'}}} as unknown as NonNullable<IpcHandlerDependencies['connections']>;
+  await expect(createApplicationHandlers(dependencies).connectionCommand({action:'start_flow',botId:'00000000-0000-4000-8000-000000000001',version:1,confirmation:'testnet:SOL-PERP'})).resolves.toMatchObject({deployment:{id:'testnet-run'}});
+});
 
 describe('validated IPC handlers', () => {
   it('keeps read-only audit evidence accessible when execution is disabled', async () => {

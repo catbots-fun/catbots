@@ -11,6 +11,7 @@ type BotsHomeScreenProps = { api: CatbotsDesktopApi['bots']; connections?: Catbo
 
 const DEX_DISPLAY_NAMES: Record<BotSummary['dex'], string> = {
   hyperliquid: 'Hyperliquid',
+  lighter: 'Lighter',
 };
 
 export function formatUpdatedAt(value: string, locale = 'en-US', timeZone = 'UTC'): string {
