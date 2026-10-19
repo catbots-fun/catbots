@@ -647,8 +647,8 @@ it("blocks static DCA sizing that exceeds the saved target before any snapshot o
   ).rejects.toThrow("exceeds target");
   expect(venue.snapshot).not.toHaveBeenCalled();
 });
-it.each([false, 'order_outcome', 'protection'] as const)("installs native protection after a DCA fill even when audit fails (%s)", async (auditFails) => {
-  if (auditFails) {
+it.each([false, 'order_outcome', 'protection', 'position_mismatch'] as const)("preserves DCA native protection through fault scenario (%s)", async (auditFails) => {
+  if (auditFails === 'order_outcome' || auditFails === 'protection') {
     const append = FlowAuditStore.prototype.append;
     vi.spyOn(FlowAuditStore.prototype, 'append').mockImplementation(function(this: FlowAuditStore, event) {
       if (event.kind === auditFails) throw new Error('AUDIT_DISK_FAILURE');
@@ -657,7 +657,7 @@ it.each([false, 'order_outcome', 'protection'] as const)("installs native protec
   }
   vi.useFakeTimers();
   vi.setSystemTime(new Date("2026-09-06T00:00:10Z"));
-  const { runner, venue } = setup();
+  const { runner, venue, path } = setup();
   let position = 0;
   let nativeClosed = false;
   const statuses = new Map<
@@ -759,6 +759,26 @@ it.each([false, 'order_outcome', 'protection'] as const)("installs native protec
   await vi.advanceTimersByTimeAsync(2000);
   expect(runner.get(target.botId)?.protection?.status).toBe("protected");
   expect(venue.protection.submitProtection).toHaveBeenCalledTimes(2);
+  if(auditFails==='position_mismatch') {
+    position=.1;
+    await vi.advanceTimersByTimeAsync(6000);
+    expect(runner.get(target.botId)).toMatchObject({status:'failed',failureCode:'position_mismatch',position:.2});
+    expect(venue.place).toHaveBeenCalledTimes(1);
+    expect(venue.protection.cancelProtection).not.toHaveBeenCalled();
+    expect(runner.auditHistory(target.botId).filter(event=>event.kind==='failure').at(-1)?.details).toMatchObject({failureCode:'position_mismatch'});
+    const restored=new FlowRunner(path);
+    try {
+      expect(restored.get(target.botId)?.failureCode).toBe('position_mismatch');
+      expect(restored.auditHistory(target.botId).filter(event=>event.kind==='failure').at(-1)?.details).toMatchObject({failureCode:'position_mismatch'});
+    } finally {await restored.dispose();}
+    await expect(runner.reconcile(target.botId,venue)).rejects.toThrow('differs');
+    expect(runner.get(target.botId)?.failureCode).toBe('position_mismatch');
+    position=.2;
+    await runner.start(target.botId,1,flow,target,'testnet',venue);
+    expect(runner.get(target.botId)?.failureCode).toBeUndefined();
+    await runner.dispose();
+    return;
+  }
   if(auditFails===false){
     await runner.stop(target.botId);
     const saved=runner.get(target.botId);
