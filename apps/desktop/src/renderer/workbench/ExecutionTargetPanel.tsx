@@ -1,4 +1,5 @@
 import { MarketPicker } from './MarketPicker';
+import { runtimeIncidentLabels, type RuntimeIncident } from '@catbots/contracts';
 import { useEffect, useState } from "react";
 import {
   Badge,
@@ -73,6 +74,8 @@ export function ExecutionTargetPanel({
     };
   }, [api, botId]);
   const [deployment, setDeployment] = useState<FlowDeployment>(),
+    [incidents, setIncidents] = useState<RuntimeIncident[]>([]),
+    [incidentWarning, setIncidentWarning] = useState<string>(),
     [healthAvailable, setHealthAvailable] = useState(false),
     [confirmation, setConfirmation] = useState(""),
     [closeConfirmation, setCloseConfirmation] = useState('');
@@ -80,6 +83,7 @@ export function ExecutionTargetPanel({
   useEffect(() => {
     setHealthAvailable(false);
     setDeployment(undefined);
+    setIncidents([]);setIncidentWarning(undefined);
     if (!api) return;
     let active = true;
     let timer: ReturnType<typeof setTimeout>;
@@ -89,7 +93,7 @@ export function ExecutionTargetPanel({
       watchdog = setTimeout(() => { timedOut = true; if (active) setHealthAvailable(false); }, 5000);
       try {
         const view = await api.command({ action: "get_flow_runtime", botId });
-        if (active) { setDeployment(view.deployment); setHealthAvailable(!timedOut); }
+        if (active) { setDeployment(view.deployment); setHealthAvailable(!timedOut); setIncidents(view.incidents ?? []); setIncidentWarning(view.incidentWarning); }
       } catch {
         if (active) {
           setHealthAvailable(false);
@@ -181,6 +185,7 @@ export function ExecutionTargetPanel({
         <h2>Deploy</h2>
         <p className="backtest-muted">Manage your trading target and monitor execution.</p>
       </header>
+      {incidentWarning && <Banner variant="error" title="Incident monitoring unavailable" description={incidentWarning}/>}
       {deployment && (
         <LayerCard className="deploy-card deploy-runtime">
           <div className="deploy-runtime-heading"><h3>Bot runtime</h3>
@@ -221,6 +226,15 @@ export function ExecutionTargetPanel({
             <div><dt>Recovery</dt><dd>{!healthAvailable || !deployment.health ? 'Unknown' : ({pending:'Operation pending',required:'Review required','not-assessed':'Not assessed'} as const)[deployment.health.recovery]}</dd></div>
           </dl>
           <p className="muted">Responsive describes the local runtime, not exchange health. Snapshot received is receipt time, not proof of fresh prices or candles.</p>
+          {incidents.length > 0 && <section aria-label="Runtime incidents">
+            <h3>Recent runtime incidents</h3>
+            <ul>{incidents.slice(0,10).map(event=><li key={event.id}>
+              <span>{runtimeIncidentLabels[event.code]}</span>{' · '}
+              <span>{event.phase==='detected'?'Detected':'Condition cleared'}</span>{' · '}
+              <time dateTime={event.at}>{new Date(event.at).toLocaleString()}</time>{' · '}
+              <span>{event.delivery==='shown'?'Desktop notification shown':event.delivery==='pending'?'Desktop notification pending':'Desktop notification unavailable'}</span>
+            </li>)}</ul>
+          </section>}
           {(deployment.orders.some((order) => order.status === "uncertain") ||
             deployment.closeResult === 'needs-attention' ||
             !!deployment.protection ||

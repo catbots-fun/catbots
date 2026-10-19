@@ -255,6 +255,7 @@ export class FlowRunner {
       ? { ...structuredClone(this.records[botId].view), health: this.health(botId), entryPauseSupported: this.records[botId].document.nodes.some(hasRiskEvaluation), closePositionSupported: this.supportsClose(this.records[botId]) }
       : undefined;
   }
+  deployments() { return Object.keys(this.records).map(botId => this.get(botId)!); }
   private health(botId: string): NonNullable<FlowDeployment['health']> {
     const record = this.records[botId];
     const active = this.active.get(botId);

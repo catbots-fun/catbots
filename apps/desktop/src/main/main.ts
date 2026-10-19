@@ -2,7 +2,8 @@ import { startWalletBridge } from './connections/wallet-bridge';
 import { ConnectionAuthorization } from './connections/authorization';
 import { ConnectionsService } from './connections/service';
 import { NodePackageService } from './nodes/package-service';
-import { safeStorage, shell } from 'electron';
+import { safeStorage, shell, Notification } from 'electron';
+import { createIncidentNotifier } from './connections/incident-notification';
 import { ProviderService } from './providers/provider-service';
 import { EncryptedCredentialStore } from './providers/credential-store';
 import { app, dialog, net, session, utilityProcess, type BrowserWindow } from 'electron';
@@ -158,6 +159,10 @@ if (ownsApplicationInstance) void app.whenReady()
       try { await shell.openExternal(walletBridge.origin); }
       catch (error) { await walletBridge.close(); walletBridge = undefined; throw error; }
     }, botId => nodePackages.flowStore().get(botId));
+    connections.startIncidentMonitoring(createIncidentNotifier(options => {
+      if (!Notification.isSupported()) throw new Error('Notification unavailable');
+      return new Notification(options);
+    }));
     const workbenchService = new WorkbenchService({ repository: workbenchRepository, configRepository, providerService, nodePackages });
     const marketUniverseCache = new MarketUniverseCache({
       adapter: isolatedE2E

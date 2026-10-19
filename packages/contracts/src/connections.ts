@@ -179,6 +179,17 @@ export type FlowDeployment = {
   };
   trace?: unknown;
 };
+export const RuntimeIncidentSchema = z.object({
+  id: z.string().uuid(), botId: z.string().min(1), deploymentId: z.string().min(1),
+  code: z.enum(['runtime_failed','runtime_interrupted','runtime_stalled','order_uncertain','close_unverified','protection_attention']),
+  phase: z.enum(['detected','cleared']), at: z.string().datetime(),
+  delivery: z.enum(['pending','shown','unavailable']), attempts: z.number().int().min(0).max(3),
+});
+export type RuntimeIncident = z.infer<typeof RuntimeIncidentSchema>;
+export const runtimeIncidentLabels: Record<RuntimeIncident['code'],string> = {
+  runtime_failed:'Runtime failed', runtime_interrupted:'Runtime interrupted', runtime_stalled:'Runtime stalled',
+  order_uncertain:'Order outcome uncertain', close_unverified:'Position close needs review', protection_attention:'Position protection needs review',
+};
 export type ExchangeActivity = {
   fetchedAt: string;
   positions: { market: string; size: string; entryPrice: string | null; unrealizedPnl: string }[];
@@ -205,6 +216,8 @@ export type FlowAuditPage = { records: FlowAuditRecord[]; nextAfter?: number };
 export type FlowAuditSummary = { count: number; through: number; databaseBytes: number; retention: 'keep_all' };
 
 export type ConnectionsView = {
+  incidents?: RuntimeIncident[];
+  incidentWarning?: string;
   auditPage?: FlowAuditPage;
   auditSummary?: FlowAuditSummary;
   botOverview?: BotExecutionOverview[];

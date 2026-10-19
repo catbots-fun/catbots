@@ -233,7 +233,7 @@ const universeCache = vi.hoisted(() => {
   };
 });
 
-vi.mock('../src/main/connections/service', () => ({ ConnectionsService: class { dispose = vi.fn(); } }));
+vi.mock('../src/main/connections/service', () => ({ ConnectionsService: class { dispose = vi.fn(); startIncidentMonitoring = vi.fn(); } }));
 vi.mock('electron', () => electron);
 vi.mock('../src/main/create-window', () => ({ createMainWindow: mainWindow.create }));
 vi.mock('../src/main/register-app-protocol', () => ({ registerAppProtocol: vi.fn() }));

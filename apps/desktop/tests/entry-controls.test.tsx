@@ -5,19 +5,26 @@ import { afterEach, expect, it, vi } from 'vitest';
 import type { ConnectionCommand, FlowDeployment } from '@catbots/contracts';
 import { ExecutionTargetPanel } from '../src/renderer/workbench/ExecutionTargetPanel';
 afterEach(()=>{cleanup();vi.useRealTimers();});
+it('shows global incident storage failure even before a bot has a deployment',async()=>{
+ const command=async()=>({adapters:[],connections:[],incidentWarning:'Incident history unavailable.'});
+ render(<ExecutionTargetPanel botId="bot" api={{command}}/>);
+ expect(await screen.findByText('Incident monitoring unavailable')).toBeTruthy();
+});
 it('shows health evidence and withdraws responsive status when runtime polling hangs',async()=>{
  vi.useFakeTimers();
  const deployment:FlowDeployment={id:'deployment',botId:'bot',version:1,environment:'testnet',target:{botId:'bot',connectionId:'connection',accountId:'account',market:'SOL-PERP',maxOrderUsd:50,maxPositionUsd:100},status:'running',startedAt:new Date().toISOString(),cycles:1,orders:[],events:[],health:{state:'responsive',recovery:'not-assessed',heartbeatAt:'2026-10-19T00:00:00Z',snapshotReceivedAt:'2026-10-19T00:00:00Z'}};
  let hang=false;let release!:()=>void;
  const command=async(input:ConnectionCommand)=>{
   if(hang && input.action==='get_flow_runtime')await new Promise<void>(resolve=>{release=resolve;});
-  return {adapters:[],connections:[],deployment};
+  return {adapters:[],connections:[],deployment,incidents:[{id:'incident',botId:'bot',deploymentId:'deployment',code:'runtime_failed' as const,phase:'detected' as const,at:'2026-10-19T00:00:00Z',delivery:'unavailable' as const,attempts:3}]};
  };
  render(<ExecutionTargetPanel botId="bot" api={{command}}/>);
  await act(async()=>{await vi.advanceTimersByTimeAsync(0);});
  expect(screen.getByText('Responsive')).toBeTruthy();
  expect(screen.getByText('Snapshot received')).toBeTruthy();
  expect(screen.getByText('Not assessed')).toBeTruthy();
+ expect(screen.getByText('Runtime failed')).toBeTruthy();
+ expect(screen.getByText('Desktop notification unavailable')).toBeTruthy();
  hang=true;
  await act(async()=>{await vi.advanceTimersByTimeAsync(7000);});
  expect(screen.queryByText('Responsive')).toBeNull();

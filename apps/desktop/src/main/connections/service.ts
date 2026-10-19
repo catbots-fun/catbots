@@ -1,4 +1,6 @@
 import { FlowRunner, validateFlowTarget } from "./flow-runner";
+import { RuntimeIncidents } from './runtime-incidents';
+import type { RuntimeIncident } from '@catbots/contracts';
 import { HyperliquidFlowVenue } from "./flow-venue";
 import type { ExchangeActivity, BotExecutionOverview, ChatFlowDraft } from "@catbots/contracts";
 import {
@@ -25,6 +27,22 @@ import {
 } from "@catbots/contracts";
 import { HyperliquidAdapter, type ExchangeAdapter } from "./adapters";
 export class ConnectionsService {
+  private incidents?: RuntimeIncidents;
+  private incidentTimer?: ReturnType<typeof setInterval>;
+  private incidentTask?: Promise<void>;
+  private incidentWarning?: string;
+  startIncidentMonitoring(notify:(event:RuntimeIncident)=>Promise<void>) {
+    if(this.incidentTimer)return;
+    try {this.incidents=new RuntimeIncidents(`${this.path}.incidents`,notify);}
+    catch {this.incidentWarning='Incident history unavailable. Check local storage; runtime monitoring is not active.';return;}
+    const scan=()=>{
+      if(this.incidentTask)return;
+      this.incidentTask=this.incidents!.scan(this.runner.deployments()).then(()=>{this.incidentWarning=undefined;})
+        .catch(()=>{this.incidentWarning='Incident history could not be saved. Notifications may be incomplete.';})
+        .finally(()=>{this.incidentTask=undefined;});
+    };
+    this.incidentTimer=setInterval(scan,5000);this.incidentTimer.unref?.();scan();
+  }
   private runner: FlowRunner;
   private activityCache = new Map<string, {at:number; value:Promise<ExchangeActivity>}>();
   private accountActivity(connection: ExchangeConnection, account:string) {
@@ -59,7 +77,8 @@ export class ConnectionsService {
     if(run?.orders.some(order=>['uncertain','submitting'].includes(order.status))) throw new Error('BOT_UNRESOLVED');
   }
   async dispose() {
-    await this.runner.dispose();
+    clearInterval(this.incidentTimer);this.incidentTimer=undefined;
+    await Promise.all([this.runner.dispose(),this.incidentTask]);
   }
   private view(): ConnectionsView {
     return structuredClone({
@@ -281,6 +300,8 @@ export class ConnectionsService {
         ...this.view(),
         deployment: this.runner.get(input.botId),
         history: this.runner.history(input.botId),
+        incidents: this.incidents?.list(input.botId),
+        incidentWarning: this.incidentWarning,
       };
     if (input.action === "reconcile_flow") {
       const deployment = this.runner.get(input.botId);
