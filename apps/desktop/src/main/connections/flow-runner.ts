@@ -847,7 +847,7 @@ export class FlowRunner {
       record.expectedPosition !== undefined &&
       Math.abs(snapshot.position - record.expectedPosition) > 1e-8
     )
-      throw new Error(
+      throw new RuntimeObservationError('position_mismatch',
         "Position differs from confirmed native/entry fills. Reconcile before continuing.",
       );
     if (snapshot.position === 0) {
