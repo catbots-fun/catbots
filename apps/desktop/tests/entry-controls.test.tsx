@@ -1,10 +1,32 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { ConnectionCommand, FlowDeployment } from '@catbots/contracts';
 import { ExecutionTargetPanel } from '../src/renderer/workbench/ExecutionTargetPanel';
-afterEach(cleanup);
+afterEach(()=>{cleanup();vi.useRealTimers();});
+it('shows health evidence and withdraws responsive status when runtime polling hangs',async()=>{
+ vi.useFakeTimers();
+ const deployment:FlowDeployment={id:'deployment',botId:'bot',version:1,environment:'testnet',target:{botId:'bot',connectionId:'connection',accountId:'account',market:'SOL-PERP',maxOrderUsd:50,maxPositionUsd:100},status:'running',startedAt:new Date().toISOString(),cycles:1,orders:[],events:[],health:{state:'responsive',recovery:'not-assessed',heartbeatAt:'2026-10-19T00:00:00Z',snapshotReceivedAt:'2026-10-19T00:00:00Z'}};
+ let hang=false;let release!:()=>void;
+ const command=async(input:ConnectionCommand)=>{
+  if(hang && input.action==='get_flow_runtime')await new Promise<void>(resolve=>{release=resolve;});
+  return {adapters:[],connections:[],deployment};
+ };
+ render(<ExecutionTargetPanel botId="bot" api={{command}}/>);
+ await act(async()=>{await vi.advanceTimersByTimeAsync(0);});
+ expect(screen.getByText('Responsive')).toBeTruthy();
+ expect(screen.getByText('Snapshot received')).toBeTruthy();
+ expect(screen.getByText('Not assessed')).toBeTruthy();
+ hang=true;
+ await act(async()=>{await vi.advanceTimersByTimeAsync(7000);});
+ expect(screen.queryByText('Responsive')).toBeNull();
+ expect(screen.getByText('Unavailable')).toBeTruthy();
+ await act(async()=>{hang=false;release();await vi.advanceTimersByTimeAsync(0);});
+ expect(screen.queryByText('Responsive')).toBeNull();
+ await act(async()=>{await vi.advanceTimersByTimeAsync(2000);});
+ expect(screen.getByText('Responsive')).toBeTruthy();
+});
 it('requires typed confirmation before sending a deployment-bound close', async () => {
  const deployment:FlowDeployment={id:'00000000-0000-4000-8000-000000000004',botId:'00000000-0000-4000-8000-000000000001',version:1,environment:'testnet',target:{botId:'00000000-0000-4000-8000-000000000001',connectionId:'',accountId:'',market:'SOL-PERP',maxOrderUsd:50,maxPositionUsd:100},status:'running',startedAt:new Date().toISOString(),cycles:1,orders:[],events:[],closePositionSupported:true,position:.2};
  const command=vi.fn(async(_input:ConnectionCommand)=>({adapters:[],connections:[],deployment}));

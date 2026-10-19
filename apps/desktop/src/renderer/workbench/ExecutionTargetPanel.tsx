@@ -73,22 +73,32 @@ export function ExecutionTargetPanel({
     };
   }, [api, botId]);
   const [deployment, setDeployment] = useState<FlowDeployment>(),
+    [healthAvailable, setHealthAvailable] = useState(false),
     [confirmation, setConfirmation] = useState(""),
     [closeConfirmation, setCloseConfirmation] = useState('');
   useEffect(() => { setCloseConfirmation(''); }, [botId, deployment?.id]);
   useEffect(() => {
+    setHealthAvailable(false);
+    setDeployment(undefined);
     if (!api) return;
     let active = true;
     let timer: ReturnType<typeof setTimeout>;
+    let watchdog: ReturnType<typeof setTimeout>;
     const poll = async () => {
+      let timedOut = false;
+      watchdog = setTimeout(() => { timedOut = true; if (active) setHealthAvailable(false); }, 5000);
       try {
         const view = await api.command({ action: "get_flow_runtime", botId });
-        if (active) setDeployment(view.deployment);
+        if (active) { setDeployment(view.deployment); setHealthAvailable(!timedOut); }
       } catch {
-        if (active)
+        if (active) {
+          setHealthAvailable(false);
           setError(
             "Runtime status unavailable. Check the backend and exchange.",
           );
+        }
+      } finally {
+        clearTimeout(watchdog);
       }
       if (active) timer = setTimeout(() => void poll(), 2000);
     };
@@ -96,6 +106,7 @@ export function ExecutionTargetPanel({
     return () => {
       active = false;
       clearTimeout(timer);
+      clearTimeout(watchdog);
     };
   }, [api, botId]);
   const running =
@@ -204,7 +215,12 @@ export function ExecutionTargetPanel({
             <div><dt>Evaluations</dt><dd>{deployment.cycles}</dd></div>
             <div><dt>Orders this run</dt><dd>{deployment.orders.length}</dd></div>
             <div><dt>Last evaluation</dt><dd>{deployment.lastRunAt ? new Date(deployment.lastRunAt).toLocaleTimeString() : 'Waiting'}</dd></div>
+            <div><dt>Runtime observation</dt><dd>{!healthAvailable ? 'Unavailable' : !deployment.health ? 'Unknown' : ({waiting:'Waiting for runtime data',responsive:'Responsive',stalled:'Stalled',inactive:'Inactive'} as const)[deployment.health.state]}</dd></div>
+            <div><dt>Heartbeat</dt><dd>{healthAvailable && deployment.health?.heartbeatAt ? new Date(deployment.health.heartbeatAt).toLocaleString() : 'Unknown'}</dd></div>
+            <div><dt>Snapshot received</dt><dd>{healthAvailable && deployment.health?.snapshotReceivedAt ? new Date(deployment.health.snapshotReceivedAt).toLocaleString() : 'Unknown'}</dd></div>
+            <div><dt>Recovery</dt><dd>{!healthAvailable || !deployment.health ? 'Unknown' : ({pending:'Operation pending',required:'Review required','not-assessed':'Not assessed'} as const)[deployment.health.recovery]}</dd></div>
           </dl>
+          <p className="muted">Responsive describes the local runtime, not exchange health. Snapshot received is receipt time, not proof of fresh prices or candles.</p>
           {(deployment.orders.some((order) => order.status === "uncertain") ||
             deployment.closeResult === 'needs-attention' ||
             !!deployment.protection ||

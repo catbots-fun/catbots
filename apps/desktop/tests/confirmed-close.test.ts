@@ -168,3 +168,26 @@ it('retains ambiguous archived inventory ownership across restart',async()=>{
  await expect(reopened.closePosition(f.target.botId,next.id,'CLOSE SOL-PERP',f.venue)).rejects.toThrow('ownership');
  expect(f.exchange.position).toBe(.2);expect(f.submitted).toHaveLength(2);
 });
+it('reports runtime observations without carrying responsive status across restart',async()=>{
+ const f=await fixture();
+ expect(f.started.health?.state).toBe('waiting');
+ expect(f.runner.get(f.target.botId)?.health).toMatchObject({state:'responsive',recovery:'not-assessed',heartbeatAt:expect.any(String),snapshotReceivedAt:expect.any(String)});
+ const reopened=f.reopen();
+ expect(reopened.get(f.target.botId)?.health).toEqual({state:'inactive',recovery:'required'});
+});
+it('reports stalled observation while a snapshot is hung without submitting an order',async()=>{
+ const f=await fixture();const count=f.submitted.length;
+ const snapshot=f.venue.snapshot;let release!:()=>void;
+ f.venue.snapshot=async times=>{await new Promise<void>(resolve=>{release=resolve;});return snapshot(times);};
+ await vi.advanceTimersByTimeAsync(22000);
+ try {
+  expect(f.runner.get(f.target.botId)?.health?.state).toBe('stalled');
+  expect(f.submitted).toHaveLength(count);
+ } finally {f.venue.snapshot=snapshot;release();await vi.advanceTimersByTimeAsync(0);}
+ expect(f.runner.get(f.target.botId)?.health?.state).toBe('responsive');
+});
+it('shows required recovery rather than responsive health after an uncertain order',async()=>{
+ const f=await fixture();f.setExecution(async()=>{throw new Error('timeout');});
+ await expect(f.close()).rejects.toThrow('timeout');
+ expect(f.runner.get(f.target.botId)?.health).toEqual({state:'inactive',recovery:'required'});
+});
