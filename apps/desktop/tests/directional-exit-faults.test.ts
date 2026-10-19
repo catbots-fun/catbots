@@ -125,6 +125,48 @@ it.each(['network', 'manual-position'] as const)('stops before an exit on %s fai
   expect(f.submitted).toHaveLength(1);
   expect(f.runner.get(f.target.botId)).toMatchObject({ status: 'failed', position: .2 });
   expect(f.runner.get(f.target.botId)?.error).toContain(failure === 'network' ? 'unavailable' : 'position changed');
+  expect(f.runner.get(f.target.botId)?.failureCode).toBe(failure === 'network' ? 'snapshot_unavailable' : 'position_mismatch');
+  expect(f.reopen().get(f.target.botId)?.failureCode).toBe(failure === 'network' ? 'snapshot_unavailable' : 'position_mismatch');
+});
+
+it('retains observation failure until a validated restart rather than no-op reconciliation',async()=>{
+ const f=await entered(true);const snapshot=f.venue.snapshot;
+ f.venue.snapshot=async()=>{throw new Error('SECRET wallet and endpoint');};
+ await vi.advanceTimersByTimeAsync(5000);
+ expect(f.runner.get(f.target.botId)).toMatchObject({failureCode:'snapshot_unavailable'});
+ expect(f.runner.get(f.target.botId)?.error).not.toContain('SECRET');
+ expect(JSON.stringify(f.runner.auditHistory(f.target.botId))).not.toContain('SECRET');
+ await f.runner.stop(f.target.botId);await f.runner.reconcile(f.target.botId,f.venue);
+ expect(f.runner.get(f.target.botId)?.failureCode).toBe('snapshot_unavailable');
+ f.venue.snapshot=snapshot;
+ await f.runner.start(f.target.botId,1,f.flow,f.target,'testnet',f.venue);
+ expect(f.runner.get(f.target.botId)?.failureCode).toBeUndefined();
+});
+
+it('does not classify an uncertain submission from its error message',async()=>{
+ const f=await entered(true);
+ f.setExecution(async()=>{throw new Error('Account position changed outside this deployment');});
+ await vi.advanceTimersByTimeAsync(5000);
+ expect(f.runner.get(f.target.botId)?.orders.at(-1)?.status).toBe('uncertain');
+ expect(f.runner.get(f.target.botId)?.failureCode).toBeUndefined();
+});
+it('classifies a failed pre-order refresh without submitting the exit',async()=>{
+ const f=await entered(true);const snapshot=f.venue.snapshot;let reads=0;
+ f.venue.snapshot=async times=>{if(++reads===2)throw new Error('SECRET pre-order response');return snapshot(times);};
+ await vi.advanceTimersByTimeAsync(5000);
+ expect(f.runner.get(f.target.botId)).toMatchObject({status:'failed',failureCode:'snapshot_unavailable'});
+ expect(f.submitted).toHaveLength(1);
+ expect(JSON.stringify(f.runner.auditHistory(f.target.botId))).not.toContain('SECRET');
+});
+it('clears the mismatch cause only after verified close inventory',async()=>{
+ const f=await entered(true);f.exchange.position=.1;await vi.advanceTimersByTimeAsync(5000);
+ const deployment=f.runner.get(f.target.botId)!;
+ expect(deployment.failureCode).toBe('position_mismatch');
+ await expect(f.runner.closePosition(f.target.botId,deployment.id,'CLOSE SOL-PERP',f.venue)).rejects.toThrow('position changed');
+ expect(f.runner.get(f.target.botId)?.failureCode).toBe('position_mismatch');
+ f.exchange.position=.2;
+ const closed=await f.runner.closePosition(f.target.botId,deployment.id,'CLOSE SOL-PERP',f.venue);
+ expect(closed.closeResult).toBe('closed');expect(closed.failureCode).toBeUndefined();
 });
 
 it('waits for a delayed exit response while stopping and does not submit a duplicate', async () => {

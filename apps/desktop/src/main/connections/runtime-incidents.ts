@@ -15,6 +15,8 @@ function conditions(run: FlowDeployment, previous: RuntimeIncident['code'][]): R
   if (run.status === 'failed') codes.push('runtime_failed');
   if (run.status === 'interrupted') codes.push('runtime_interrupted');
   if (run.health?.state === 'stalled') codes.push('runtime_stalled');
+  if (run.failureCode === 'snapshot_unavailable') codes.push('exchange_snapshot_unavailable');
+  if (run.failureCode === 'position_mismatch') codes.push('position_mismatch');
   if (run.orders.some(order => order.status === 'uncertain')) codes.push('order_uncertain');
   if (run.closeResult === 'needs-attention' || (previous.includes('close_unverified') && run.closeResult !== 'closed')) codes.push('close_unverified');
   if (run.protection && !['protected','flat'].includes(run.protection.status)) codes.push('protection_attention');

@@ -29,6 +29,9 @@ import {
   type FlowVenue,
   type VenueSnapshot,
 } from "./flow-venue";
+class RuntimeObservationError extends Error {
+  constructor(readonly code: NonNullable<FlowDeployment['failureCode']>, message: string) { super(message); }
+}
 export function validateExecutableFlow(document: FlowDocument) {
   compileFlow(document, runtimeNodePackages);
   if (
@@ -260,7 +263,7 @@ export class FlowRunner {
     const record = this.records[botId];
     const active = this.active.get(botId);
     const recovery = this.reconciling.has(botId) || (active && record.pending) ? 'pending'
-      : record.pending || (record.manualClose && record.view.closeResult !== 'closed') || ['failed', 'interrupted'].includes(record.view.status) ? 'required' : 'not-assessed';
+      : record.pending || record.view.failureCode || (record.manualClose && record.view.closeResult !== 'closed') || ['failed', 'interrupted'].includes(record.view.status) ? 'required' : 'not-assessed';
     if (!active) return { state: 'inactive', recovery };
     const age = Date.now() - (active.heartbeatAt ?? active.observedSince);
     return {
@@ -308,6 +311,7 @@ export class FlowRunner {
         !Number.isFinite(record.expectedPosition) || Math.abs(snapshot.position - record.expectedPosition!) > 1e-8 || snapshot.openOrders !== 0)
       throw new Error('Close verification differs from confirmed inventory or has open orders; inspect exchange');
     record.view.closeResult = snapshot.position === 0 ? 'closed' : 'needs-attention';
+    delete record.view.failureCode;
     record.view.status = 'stopped';
     record.view.error = snapshot.position === 0 ? undefined : 'Position remains open. Review the exchange before confirming another close.';
     this.persist();
@@ -501,6 +505,7 @@ export class FlowRunner {
       };
     }
     await this.syncProtection(this.records[botId], venue, initial);
+    delete this.records[botId].view.failureCode;
     this.persist();
     try {
       this.auditEvent(this.records[botId], 'lifecycle', { event: same ? 'resumed' : 'started', status: 'running', environment, market: target.market });
@@ -574,7 +579,7 @@ export class FlowRunner {
           !record.document.nodes.some(hasRiskEvaluation))
       )
         return;
-      const snapshot = await active.venue.snapshot(signal ? times : []);
+      const snapshot = await this.runtimeSnapshot(active.venue, signal ? times : []);
       if (active.stop) return;
       active.snapshotReceivedAt = Date.now();
       active.heartbeatAt = Date.now();
@@ -595,7 +600,7 @@ export class FlowRunner {
         record.expectedPosition !== undefined &&
         Math.abs(snapshot.position - record.expectedPosition) > 1e-8
       )
-        throw new Error("Account position changed outside this deployment");
+        throw new RuntimeObservationError('position_mismatch', "Account position changed outside this deployment");
       const evaluateSignal = signal && !record.view.entriesPaused;
       const run = evaluateSignal
         ? active.evaluate(context, record.state)
@@ -625,7 +630,7 @@ export class FlowRunner {
       this.persist();
       for (const proposal of run.orders) {
         if (active.stop) break;
-        const fresh = await active.venue.snapshot([]);
+        const fresh = await this.runtimeSnapshot(active.venue, []);
         if (active.stop) break;
         if (record.view.entriesPaused && !proposal.reduceOnly) {
           record.cancelled!.push(proposal.clientOrderId);
@@ -678,7 +683,7 @@ export class FlowRunner {
         const outcome = { runId: context.runId, cloid, ...record.view.orders[record.view.orders.length - 1] };
         let protectedPosition = true;
         if (active.venue.protection) {
-          const after = await active.venue.snapshot([]);
+          const after = await this.runtimeSnapshot(active.venue, []);
           protectedPosition = await this.syncProtection(record, active.venue, after);
         }
         // Confirmed inventory must receive native protection even if audit storage fails.
@@ -700,6 +705,7 @@ export class FlowRunner {
       ];
       record.queued = [];
       record.view.status = "failed";
+      record.view.failureCode = error instanceof RuntimeObservationError ? error.code : undefined;
       if (record.pending && record.view.orders.length) {
         record.view.orders[record.view.orders.length - 1].status =
           error instanceof OrderRejectedError ? "rejected" : "uncertain";
@@ -717,8 +723,12 @@ export class FlowRunner {
       this.active.delete(botId);
       this.persist();
       // Audit failure must not erase the recovery journal or trigger a resend.
-      try { this.auditEvent(record, 'failure', { error: record.view.error, pending: record.pending, status: record.view.status }); } catch { /* Runtime is already stopped; preserve recovery evidence. */ }
+      try { this.auditEvent(record, 'failure', { error: record.view.error, failureCode: record.view.failureCode, pending: record.pending, status: record.view.status }); } catch { /* Runtime is already stopped; preserve recovery evidence. */ }
     }
+  }
+  private async runtimeSnapshot(venue: FlowVenue, times: string[]) {
+    try { return await venue.snapshot(times); }
+    catch { throw new RuntimeObservationError('snapshot_unavailable', 'Exchange snapshot unavailable. Review connectivity and account access before restarting.'); }
   }
   connectionRunning(connectionId: string) {
     return [...new Set([...this.active.keys(), ...this.reconciling])].some(
