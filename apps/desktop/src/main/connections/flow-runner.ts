@@ -303,6 +303,10 @@ export class FlowRunner {
     if (this.reconciling.has(botId) || this.accountReserved(record.target, record.view.environment, botId)) throw new Error('Account operation already in progress');
     if (Object.values(this.records).some(other => other.pending && !(other === record && this.active.has(botId)) && other.view.environment === record.view.environment &&
         (other.target.accountId === record.target.accountId || other.target.connectionId === record.target.connectionId))) throw new Error('Account has an unresolved order; reconcile before closing');
+    if ([...Object.values(this.records), ...this.archives].some(other => other !== record && other.view.environment === record.view.environment &&
+        (other.target.accountId === record.target.accountId || other.target.connectionId === record.target.connectionId) &&
+        (other.pending || (other.manualClose && other.view.closeResult !== 'closed') || other.expectedPosition !== 0)))
+      throw new Error('Account ownership is ambiguous; inspect other deployments before closing');
     this.reconciling.add(botId);
     try {
       await this.stop(botId);
@@ -421,6 +425,10 @@ export class FlowRunner {
       )
     )
       throw new Error("Account already running");
+    // Hold the account across the final asynchronous protection initialization.
+    // A close must not stop an empty active slot just before start installs it.
+    this.reconciling.add(botId);
+    try {
     const prior = this.records[botId];
     const same =
       prior &&
@@ -491,6 +499,7 @@ export class FlowRunner {
     });
     this.schedule(botId);
     return this.get(botId)!;
+    } finally { this.reconciling.delete(botId); }
   }
   private timeframes(doc: FlowDocument) {
     return [

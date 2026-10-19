@@ -121,7 +121,7 @@ it('rejects a stale start preflight after a partial close reserved the account',
  expect(await starting).toHaveProperty('error');expect(f.submitted).toHaveLength(2);
 });
 it('waits for a submitted entry to settle before closing its confirmed inventory',async()=>{
- const f=await fixture();await f.runner.stop(f.target.botId);
+ const f=await fixture();await f.close();
  // Resume with a pending new directional order is exercised from a second flat bot.
  f.exchange.position=0;
  const other={...f.target,botId:'00000000-0000-4000-8000-000000000003'};
@@ -134,10 +134,37 @@ it('waits for a submitted entry to settle before closing its confirmed inventory
  const outcome=closing.then(value=>({value}),error=>({error}));
  await vi.advanceTimersByTimeAsync(0);
  try {
-  expect(f.submitted).toHaveLength(2);
+  expect(f.submitted).toHaveLength(3);
   await expect(f.runner.reconcile(f.target.botId,f.venue)).rejects.toThrow('account');
  } finally {f.setExecution(async order=>f.fill(order));release();}
  const result=await outcome;
  expect(result).toMatchObject({value:{position:0,closeResult:'closed'}});
- expect(f.submitted[2]).toMatchObject({quantity:.2,reduceOnly:true});
+ expect(f.submitted[3]).toMatchObject({quantity:.2,reduceOnly:true});
+});
+it('refuses a stale deployment close when another stopped bot also claims the inventory',async()=>{
+ const f=await fixture();await f.runner.stop(f.target.botId);
+ f.exchange.position=0; // External flatten is not evidence that transfers ownership.
+ const other={...f.target,botId:'00000000-0000-4000-8000-000000000003'};
+ await f.runner.start(other.botId,1,f.flow,other,'testnet',f.venue);
+ await vi.advanceTimersByTimeAsync(1000);await f.runner.stop(other.botId);
+ await expect(f.close()).rejects.toThrow('ownership');
+ expect(f.exchange.position).toBe(.2);expect(f.submitted).toHaveLength(2);
+});
+it('keeps the account reserved through asynchronous startup activation',async()=>{
+ const f=await fixture();await f.runner.stop(f.target.botId);
+ const starting=f.runner.start(f.target.botId,1,f.flow,f.target,'testnet',f.venue);
+ await Promise.resolve();
+ const closing=f.close();
+ const result=await Promise.allSettled([starting,closing]);
+ expect(result[0].status).toBe('fulfilled');expect(result[1].status).toBe('rejected');
+ expect(f.runner.get(f.target.botId)).toMatchObject({status:'running',position:.2});
+ expect(f.submitted).toHaveLength(1);
+});
+it('retains ambiguous archived inventory ownership across restart',async()=>{
+ const f=await fixture();await f.runner.stop(f.target.botId);f.exchange.position=0;
+ const next=await f.runner.start(f.target.botId,2,f.flow,f.target,'testnet',f.venue);
+ await vi.advanceTimersByTimeAsync(1000);await f.runner.stop(f.target.botId);
+ const reopened=f.reopen();
+ await expect(reopened.closePosition(f.target.botId,next.id,'CLOSE SOL-PERP',f.venue)).rejects.toThrow('ownership');
+ expect(f.exchange.position).toBe(.2);expect(f.submitted).toHaveLength(2);
 });
