@@ -161,6 +161,12 @@ export type FlowDeployment = {
   events: string[];
   position?: number;
   riskCheckedAt?: string;
+  health?: {
+    state: 'waiting' | 'responsive' | 'stalled' | 'inactive';
+    heartbeatAt?: string;
+    snapshotReceivedAt?: string;
+    recovery: 'pending' | 'required' | 'not-assessed';
+  };
   protection?: {
     mode: "exchange";
     status: string;

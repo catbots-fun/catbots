@@ -191,6 +191,9 @@ export class FlowRunner {
       timer?: ReturnType<typeof setTimeout>;
       task?: Promise<void>;
       stop: boolean;
+      observedSince: number;
+      heartbeatAt?: number;
+      snapshotReceivedAt?: number;
       evaluate: ReturnType<typeof compileFlow>;
     }
   >();
@@ -249,8 +252,22 @@ export class FlowRunner {
   }
   get(botId: string) {
     return this.records[botId]
-      ? { ...structuredClone(this.records[botId].view), entryPauseSupported: this.records[botId].document.nodes.some(hasRiskEvaluation), closePositionSupported: this.supportsClose(this.records[botId]) }
+      ? { ...structuredClone(this.records[botId].view), health: this.health(botId), entryPauseSupported: this.records[botId].document.nodes.some(hasRiskEvaluation), closePositionSupported: this.supportsClose(this.records[botId]) }
       : undefined;
+  }
+  private health(botId: string): NonNullable<FlowDeployment['health']> {
+    const record = this.records[botId];
+    const active = this.active.get(botId);
+    const recovery = this.reconciling.has(botId) || (active && record.pending) ? 'pending'
+      : record.pending || (record.manualClose && record.view.closeResult !== 'closed') || ['failed', 'interrupted'].includes(record.view.status) ? 'required' : 'not-assessed';
+    if (!active) return { state: 'inactive', recovery };
+    const age = Date.now() - (active.heartbeatAt ?? active.observedSince);
+    return {
+      state: age < 0 || age > 15000 ? 'stalled' : active.snapshotReceivedAt === undefined ? 'waiting' : 'responsive',
+      recovery,
+      ...(active.heartbeatAt === undefined ? {} : { heartbeatAt: new Date(active.heartbeatAt).toISOString() }),
+      ...(active.snapshotReceivedAt === undefined ? {} : { snapshotReceivedAt: new Date(active.snapshotReceivedAt).toISOString() }),
+    };
   }
   private supportsClose(record: Stored) {
     return record.view.environment === 'testnet' && !record.protection && record.document.nodes.some(node => node.type === 'strategy.directional');
@@ -495,6 +512,7 @@ export class FlowRunner {
     this.active.set(botId, {
       venue,
       stop: false,
+      observedSince: Date.now(),
       evaluate: compileFlow(document, runtimeNodePackages, true),
     });
     this.schedule(botId);
@@ -530,6 +548,7 @@ export class FlowRunner {
   }
   private async tick(botId: string) {
     const active = this.active.get(botId)!;
+    active.heartbeatAt = Date.now();
     const record = this.records[botId];
     try {
       const times = this.timeframes(record.document);
@@ -556,6 +575,8 @@ export class FlowRunner {
         return;
       const snapshot = await active.venue.snapshot(signal ? times : []);
       if (active.stop) return;
+      active.snapshotReceivedAt = Date.now();
+      active.heartbeatAt = Date.now();
       if (!(await this.syncProtection(record, active.venue, snapshot))) {
         active.stop = true;
         this.active.delete(botId);
