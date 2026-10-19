@@ -8,6 +8,7 @@ import type { LighterCredentials, LighterSignerPort } from './signer';
 import { clientOrderIndex, toUnits } from './precision';
 
 const orderSchema = z.object({ client_order_index: z.number().int(), order_id: z.string(), market_index: z.number().int(), owner_account_index: z.number().int(), is_ask: z.boolean(), status: z.string(), filled_base_amount: decimal, filled_quote_amount: decimal, initial_base_amount: decimal, price: decimal });
+export type LighterOrderEvidence = z.infer<typeof orderSchema>;
 export const ordersSchema = z.object({ orders: z.array(orderSchema) });
 const positive = z.coerce.number().finite().positive();
 const durations: Record<string, number> = { '1m':60, '5m':300, '15m':900, '30m':1800, '1h':3600, '4h':14400, '1d':86400 };
@@ -105,6 +106,13 @@ export class LighterFlowVenue implements FlowVenue {
   async reconcile(order: OrderPlan, cloid: `0x${string}`): Promise<Fill | null | undefined> {
     const value = await this.outcome(clientOrderIndex(cloid), true);
     if (!value) return undefined;
+    return this.reconcileEvidence(order, cloid, value);
+  }
+  /** Reconcile trades against the same order evidence already identity-checked
+   * by protection inspection. A second order lookup could regress known fills. */
+  async reconcileEvidence(order: OrderPlan, cloid: `0x${string}`, evidence: LighterOrderEvidence): Promise<Fill | null | undefined> {
+    const value = orderSchema.parse(evidence);
+    if (value.client_order_index !== clientOrderIndex(cloid)) throw new Error('LIGHTER_ORDER_IDENTITY_MISMATCH');
     const market = await this.market();
     if (value.owner_account_index !== this.credentials.accountIndex || value.market_index !== market.market_id || value.is_ask !== (order.side === 'sell') || Math.abs(Number(value.initial_base_amount) - order.quantity) > 1e-8) throw new Error('LIGHTER_ORDER_IDENTITY_MISMATCH');
     if (value.status !== 'filled' && value.status !== 'canceled' && !value.status.startsWith('canceled-')) return undefined;

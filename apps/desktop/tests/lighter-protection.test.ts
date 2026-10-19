@@ -19,13 +19,14 @@ function fixture(kind: 'sl' | 'tp' = 'sl') {
   let trades: unknown[] = [];
   let broadcastError = false;
   let cancelRace = false;
+  let nextRows: unknown[] | undefined;
   const sends: { type: string; tx: Record<string, unknown> }[] = [];
   const request = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input));
     let body: object;
     switch (url.pathname.split('/').at(-1)) {
       case 'orderBooks': body = { order_books: [market] }; break;
-      case 'accountOrders': body = { orders: rows }; break;
+      case 'accountOrders': body = { orders: rows }; if (nextRows) { rows = nextRows; nextRows = undefined; } break;
       case 'accountInactiveOrders': body = { orders: historical }; break;
       case 'nextNonce': body = { nonce: sends.length }; break;
       case 'trades': body = { trades }; break;
@@ -45,8 +46,8 @@ function fixture(kind: 'sl' | 'tp' = 'sl') {
   const client = new LighterClient('testnet', request);
   const signer = { publicKey: async () => 'key', authToken: async () => 'token', signOrder: async () => '{}', signProtection: async (input: unknown) => JSON.stringify(input), signCancel: async (input: unknown) => JSON.stringify(input) };
   const execution = new LighterFlowVenue(client, signer, credentials, target);
-  const venue = new LighterProtectionVenue(client, signer, credentials, target, (order, cloid) => execution.reconcile(order, cloid));
-  return { plan, row, venue, sends, request, setRows: (value: unknown[]) => { rows = value; }, setHistory: (value: unknown[]) => { historical = value; }, setTrades: (value: unknown[]) => { trades = value; }, loseResponse: () => { broadcastError = true; }, race: () => { cancelRace = true; } };
+  const venue = new LighterProtectionVenue(client, signer, credentials, target, (order, cloid, evidence) => execution.reconcileEvidence(order, cloid, evidence));
+  return { plan, row, venue, sends, request, changeAfterRead: (value: unknown[]) => { nextRows = value; }, setRows: (value: unknown[]) => { rows = value; }, setHistory: (value: unknown[]) => { historical = value; }, setTrades: (value: unknown[]) => { trades = value; }, loseResponse: () => { broadcastError = true; }, race: () => { cancelRace = true; } };
 }
 
 it.each(['sl', 'tp'] as const)('submits one verified %s trigger and refuses a duplicate', async kind => {
@@ -125,4 +126,26 @@ it.each(['pending', 'open'])('accepts %s mark-price protection but not an alread
   expect((await f.venue.inspectProtection(f.plan)).state).toBe('open');
   f.setRows([{ ...f.row, trigger_status: 'ready' }]);
   expect((await f.venue.inspectProtection(f.plan)).state).toBe('unknown');
+});
+
+it.each(['281474976710657', '281474976710658'])('never discards a known partial fill when a second read regresses evidence (%s)', async order_id => {
+  const f = fixture(); f.plan.exchangeId = f.row.order_id;
+  f.setRows([{ ...f.row, status: 'canceled', filled_base_amount: '0.05', filled_quote_amount: '120', remaining_base_amount: '0.05' }]);
+  f.changeAfterRead([{ ...f.row, order_id, status: 'canceled' }]);
+  expect((await f.venue.inspectProtection(f.plan)).state).toBe('unknown');
+  expect(f.sends).toHaveLength(0);
+});
+
+it('does not accept different nonzero fill totals from a second order read', async () => {
+  const f = fixture();
+  f.setRows([{ ...f.row, status: 'canceled', filled_base_amount: '0.05', filled_quote_amount: '120', remaining_base_amount: '0.05' }]);
+  f.changeAfterRead([{ ...f.row, status: 'canceled', filled_base_amount: '0.04', filled_quote_amount: '96', remaining_base_amount: '0.06' }]);
+  f.setTrades([{ trade_id_str: 't1', ask_id_str: f.row.order_id, bid_id_str: 'other', ask_account_id: 12, bid_account_id: 50, is_maker_ask: false, size: '0.04', usd_amount: '96', taker_fee: 300 }]);
+  expect((await f.venue.inspectProtection(f.plan)).state).toBe('unknown');
+});
+
+it.each(['1', '281474976710655', '1152921504606846976'])('never cancels a non-exchange order ID %s', async order_id => {
+  const f = fixture(); f.setRows([{ ...f.row, order_id }]);
+  await expect(f.venue.cancelProtection(f.plan)).rejects.toThrow();
+  expect(f.sends).toHaveLength(0);
 });

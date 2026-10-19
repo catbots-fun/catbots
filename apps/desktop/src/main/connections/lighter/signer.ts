@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { createContext, runInContext } from 'node:vm';
 import { z } from 'zod';
 import type { LighterEnvironment } from './client';
+import { isExchangeOrderId } from './precision';
 
 export type LighterCredentials = { accountIndex: number; apiKeyIndex: number; apiPrivateKey: string };
 export interface LighterSignerPort {
@@ -77,7 +78,7 @@ export class LighterSigner implements LighterProtectionSignerPort {
     )).txInfo;
   }
   async signCancel(input: Parameters<LighterProtectionSignerPort['signCancel']>[0]) {
-    if (!safeInteger(input.market, 32767) || !safeInteger(input.nonce) || !wireInteger(input.orderIndex, 9223372036854775807n)) throw new Error('LIGHTER_CANCEL_INVALID');
+    if (!safeInteger(input.market, 32767) || !safeInteger(input.nonce) || !isExchangeOrderId(input.orderIndex)) throw new Error('LIGHTER_CANCEL_INVALID');
     await this.initialize();
     return z.object({ txInfo: z.string().min(1) }).parse(await this.invoke('_signCancelOrder',
       this.credentials.accountIndex, input.market, input.orderIndex, input.nonce,

@@ -4,8 +4,9 @@ import type { Fill, OrderPlan } from '@catbots/strategy-runtime';
 import type { ProtectionStatus, ProtectionVenue, ProtectiveOrder } from '../native-protection';
 import { decimal, markets } from './accounts';
 import { LighterClient } from './client';
-import { clientOrderIndex, toUnits } from './precision';
+import { clientOrderIndex, isExchangeOrderId, toUnits } from './precision';
 import type { LighterCredentials, LighterProtectionSignerPort } from './signer';
+import type { LighterOrderEvidence } from './venue';
 
 const evidence = z.object({
   client_order_index: z.number().int().safe(), order_id: z.string().regex(/^[1-9]\d*$/),
@@ -17,7 +18,7 @@ const evidence = z.object({
 });
 type Evidence = z.infer<typeof evidence>;
 const pageSchema = z.object({ orders: z.array(evidence), next_cursor: z.string().optional() });
-type Reconcile = (order: OrderPlan, cloid: `0x${string}`) => Promise<Fill | null | undefined>;
+type Reconcile = (order: OrderPlan, cloid: `0x${string}`, evidence: LighterOrderEvidence) => Promise<Fill | null | undefined>;
 
 function exactUnits(value: string, decimals: number): bigint {
   const units = toUnits(value, decimals);
@@ -85,7 +86,7 @@ export class LighterProtectionVenue implements ProtectionVenue {
       return row.owner_account_index === this.credentials.accountIndex && row.market_index === market.market_id &&
         row.is_ask === sell && row.reduce_only && row.type === (plan.kind === 'sl' ? 'stop-loss' : 'take-profit') &&
         row.time_in_force === 'immediate-or-cancel' && (!plan.exchangeId || plan.exchangeId === row.order_id) &&
-        BigInt(row.order_id) <= 9223372036854775807n &&
+        isExchangeOrderId(row.order_id) &&
         exactUnits(row.initial_base_amount, market.supported_size_decimals) === amount &&
         exactUnits(row.trigger_price, market.supported_price_decimals) === trigger &&
         exactUnits(row.price, market.supported_price_decimals) === price &&
@@ -101,7 +102,7 @@ export class LighterProtectionVenue implements ProtectionVenue {
     if (['pending', 'open'].includes(row.status) && row.trigger_status === 'mark-price' && row.order_expiry > Date.now() &&
       Number(row.filled_base_amount) === 0 && Number(row.filled_quote_amount) === 0) return { state: 'open', exchangeId: row.order_id };
     if (row.status !== 'filled' && row.status !== 'canceled' && !row.status.startsWith('canceled-')) return { state: 'unknown' };
-    const fill = await this.reconcile(plan.order, plan.cloid);
+    const fill = await this.reconcile(plan.order, plan.cloid, row);
     if (fill === undefined || (fill && fill.id !== row.order_id)) return { state: 'unknown' };
     return { state: 'terminal', exchangeId: row.order_id, ...(fill ? { fill } : {}) };
   }

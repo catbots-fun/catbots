@@ -31,7 +31,13 @@ it.each([{ triggerPrice: '4294967296' }, { amount: '1.5' }, { amount: '0' }, { p
   await expect(signer.signProtection({ ...nativeInput(), ...invalid })).rejects.toThrow('LIGHTER_PROTECTION_INVALID');
 });
 
-it.each(['0', '-1', '1.1', '9223372036854775808'])('rejects unsafe cancellation identity %s before signing', async orderIndex => {
+it.each(['0', '1', '281474976710655', '-1', '1.1', '1152921504606846976', '9223372036854775808'])('rejects unsafe cancellation identity %s before signing', async orderIndex => {
   const signer = new LighterSigner('/no-assets', 'testnet', credentials);
   await expect(signer.signCancel({ market: 0, orderIndex, nonce: 1 })).rejects.toThrow('LIGHTER_CANCEL_INVALID');
 });
+
+it.each(['281474976710656', '1152921504606846975', '9007199254740993'])('preserves valid exchange cancellation identity %s exactly in signed JSON', async orderIndex => {
+  const signer = new LighterSigner(resolve('assets/lighter'), 'testnet', credentials);
+  const signed = await signer.signCancel({ market: 0, orderIndex, nonce: 1 });
+  expect(signed).toMatch(new RegExp(`"Index":\\s*${orderIndex}(?:,|})`));
+}, 15000);
