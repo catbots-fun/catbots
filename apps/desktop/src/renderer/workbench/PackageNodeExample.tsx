@@ -10,7 +10,7 @@ import type { CatbotsDesktopApi } from '@catbots/contracts';
 import { StrategyNodeCard } from './StrategyGraph';
 import type { StrategyFlowNode } from './graph-model';
 import { nodePresentation, programNodeSize } from './node-presentation';
-import { connectionError, defaultConfig, editorDefinitions, parseDraft, starterFlow, itemFlowExample } from './flow-editor-model';
+import { connectionError, defaultConfig, editorDefinition, editorDefinitions, parseDraft, starterFlow, itemFlowExample } from './flow-editor-model';
 
 const nodeTypes = { strategy: StrategyNodeCard };
 const storageKey = 'catbots.flow-programming-draft.v1';
@@ -57,20 +57,20 @@ export function PackageNodeExample({ nodeApi, bots, onOpenBot }: { bots?: Catbot
     document.edges.forEach(edge => diagram.setEdge(edge.source, edge.target));
     layout(diagram);
     const nodes: StrategyFlowNode[] = document.nodes.map(node => {
-      const def = editorDefinitions.get(node.type)!;
+      const def = editorDefinition(node)!;
       const point = diagram.node(node.id);
       return { id: node.id, type: 'strategy', selected: node.id === selected, position: positions[node.id] ?? { x: point.x - programNodeSize.width / 2, y: point.y - programNodeSize.height / 2 }, width: programNodeSize.width, height: programNodeSize.height,
         data: { kind: def.category, nodeType: node.type, title: def.title, summary: Object.entries(node.config).slice(0, 3).map(([key, value]) => `${key.replace(/([a-z])([A-Z])/g, '$1 $2')}: ${String(value)}`).join(' · ') || (def.category === 'trigger' ? 'Starts one evaluation' : def.category === 'data' ? 'Reads snapshot data' : def.type === 'condition.branch' ? 'Routes to true or false' : def.category === 'output' ? 'Inspect connected value' : 'Uses connected inputs'), accessibleName: `${def.category}: ${def.title}`, inputPorts: Object.keys(def.inputs), outputPorts: Object.keys(def.outputs), portTypes: { inputs: def.inputs, outputs: def.outputs }, showPorts: true } };
     });
     const edges: Edge[] = document.edges.map((edge, index) => {
       const source = document.nodes.find(node => node.id === edge.source)!;
-      const type = editorDefinitions.get(source.type)!.outputs[edge.sourcePort];
+      const type = editorDefinition(source)!.outputs[edge.sourcePort];
       return { id: `wire-${index}`, source: edge.source, target: edge.target, sourceHandle: edge.sourcePort, targetHandle: edge.targetPort, type: 'default', markerEnd: { type: MarkerType.ArrowClosed }, className: type === 'items' ? 'program-item-wire' : type === 'flow' ? 'program-flow-wire' : 'program-data-wire', label: selected === edge.source || selected === edge.target ? `${edge.sourcePort} → ${edge.targetPort}` : undefined };
     });
     return { nodes, edges };
   }, [document, selected, positions]);
   const node = document.nodes.find(node => node.id === selected);
-  const definition = node ? editorDefinitions.get(node.type) : undefined;
+  const definition = node ? editorDefinition(node) : undefined;
   const currentRun = runs[runIndex];
   const connect = (edge: FlowEdge) => { const error = connectionError(document, edge); if (error) setNotice(error); else edit({ ...document, edges: [...document.edges, edge] }); };
   const simulate = async () => {
@@ -100,9 +100,9 @@ export function PackageNodeExample({ nodeApi, bots, onOpenBot }: { bots?: Catbot
       <section className="flow-program-palette" aria-label="Node palette"><Select size="sm" label="Node role" value={role} onValueChange={value => setRole(String(value))}><Select.Option value="all">All nodes</Select.Option><Select.Option value="trigger">Triggers</Select.Option><Select.Option value="action">Actions</Select.Option></Select><Input size="base" label="Find a node" value={search} onChange={event => setSearch(event.target.value)} />
         {Object.entries(nodePresentation).filter(([category]) => category !== 'logic').map(([category, { label, icon: Icon }]) => {
           const definitions = [...editorDefinitions.values()].filter(def => def.category === category && (role === 'all' || (def.role ?? (def.category === 'trigger' ? 'trigger' : 'action')) === role) && `${def.title} ${def.type}`.toLowerCase().includes(search.toLowerCase()));
-          return definitions.length ? <section key={category}><Badge variant="secondary" className={`node-category-${category}`}><Icon size={14} aria-hidden="true" />{label}</Badge>{definitions.map(def => <Button size="sm" variant="ghost" key={def.type} onClick={() => {
+          return definitions.length ? <section key={category}><Badge variant="secondary" className={`node-category-${category}`}><Icon size={14} aria-hidden="true" />{label}</Badge>{definitions.map(def => <Button size="sm" variant="ghost" key={`${def.type}@${def.version}`} onClick={() => {
             if (document.nodes.length >= 200) { setNotice('Maximum 200 nodes.'); return; }
-            const id = crypto.randomUUID(); edit({ ...document, nodes: [...document.nodes, { id, type: def.type, version: def.version, config: defaultConfig(def.type) }] }); setSelected(id);
+            const id = crypto.randomUUID(); edit({ ...document, nodes: [...document.nodes, { id, type: def.type, version: def.version, config: defaultConfig(def.type, def.version) }] }); setSelected(id);
           }}>Add {def.title}</Button>)}</section> : null;
         })}
       </section>
@@ -119,14 +119,14 @@ export function PackageNodeExample({ nodeApi, bots, onOpenBot }: { bots?: Catbot
       <Dialog.Root open={!!node} onOpenChange={open => { if (!open) setSelected(null); }}><Dialog className="node-editor-dialog" aria-label="Node editor"><Dialog.Title className="sr-only">Node details</Dialog.Title>{node && definition && <NodeConfiguration key={node.id} node={node} draft={{ botId: '00000000-0000-4000-8000-000000000000', version: 1, status: 'building', updatedAt: '2026-09-06T00:00:00.000Z', document }} nodeApi={nodeApi} workspace={workspace} onSelectNode={setSelected} onClose={() => setSelected(null)} onSave={async updated => edit({ ...document, nodes: document.nodes.map(item => item.id === updated.id ? updated : item) })} onDebug={run => { setRuns([run]); setRunIndex(0); }} connections={<section className="node-sandbox-connections"><p>Parameters update this sandbox. Save draft stores it in this browser; Import creates a shared bot.</p>
         <h4>Connect an input</h4>
         <Select size="base" label="Target port" value={wireTarget} onValueChange={value => setWireTarget(String(value))}>{Object.entries(definition.inputs).map(([port, type]) => <Select.Option key={port} value={port}>{port} · {type}</Select.Option>)}</Select>
-        <Select size="base" label="Source port" value={wireSource} onValueChange={value => setWireSource(String(value))}>{document.nodes.filter(item => item.id !== node.id).flatMap(item => Object.entries(editorDefinitions.get(item.type)!.outputs).filter(([, type]) => type === definition.inputs[wireTarget]).map(([port]) => <Select.Option key={`${item.id}:${port}`} value={JSON.stringify([item.id, port])}>{editorDefinitions.get(item.type)!.title} · {item.id.slice(0, 8)} · {port}</Select.Option>))}</Select>
+        <Select size="base" label="Source port" value={wireSource} onValueChange={value => setWireSource(String(value))}>{document.nodes.filter(item => item.id !== node.id).flatMap(item => Object.entries(editorDefinition(item)!.outputs).filter(([, type]) => type === definition.inputs[wireTarget]).map(([port]) => <Select.Option key={`${item.id}:${port}`} value={JSON.stringify([item.id, port])}>{editorDefinition(item)!.title} · {item.id.slice(0, 8)} · {port}</Select.Option>))}</Select>
         <Button size="sm" disabled={!wireTarget || !wireSource} onClick={() => { const [source, sourcePort] = JSON.parse(wireSource); connect({ source, sourcePort, target: node.id, targetPort: wireTarget }); }}>Connect ports</Button>
         <h4>Connections</h4>{document.edges.map((edge, index) => edge.target === node.id || edge.source === node.id ? <Button size="sm" variant="ghost" key={index} onClick={() => edit({ ...document, edges: document.edges.filter((_, i) => i !== index) })}>Remove {edge.sourcePort} → {edge.targetPort}</Button> : null)}
         <Button size="sm" variant="secondary" onClick={() => { edit({ ...document, nodes: document.nodes.filter(item => item.id !== node.id), edges: document.edges.filter(edge => edge.source !== node.id && edge.target !== node.id) }); setSelected(null); }}>Delete node</Button>
 </section>} />}</Dialog></Dialog.Root>
     </div>
     <section aria-label="Flow debugger"><h3>Debug timeline</h3><div className="provider-actions"><Button size="sm" variant="secondary" onClick={() => { setRuns([]); setSimulationId(crypto.randomUUID()); setRunIndex(0); setNotice('Run history cleared.'); }}>Clear run history</Button>{runs.map((run, index) => <Button size="sm" variant={index === runIndex ? 'secondary' : 'ghost'} key={run.runId} onClick={() => setRunIndex(index)}>Tick {index + 1}</Button>)}</div>
-      {currentRun ? <><p>{currentRun.orders.length} proposals · {currentRun.market} · {new Date(currentRun.at).toISOString()}</p><div className="flow-trace-list">{currentRun.trace.map(trace => <Button size="sm" variant="ghost" key={trace.nodeId} onClick={() => setSelected(trace.nodeId)}>{editorDefinitions.get(document.nodes.find(node => node.id === trace.nodeId)!.type)!.title} · {trace.status ?? 'executed'}</Button>)}</div></> : <p>Run with market data to inspect node inputs, outputs and skipped branches.</p>}
+      {currentRun ? <><p>{currentRun.orders.length} proposals · {currentRun.market} · {new Date(currentRun.at).toISOString()}</p><div className="flow-trace-list">{currentRun.trace.map(trace => <Button size="sm" variant="ghost" key={trace.nodeId} onClick={() => setSelected(trace.nodeId)}>{editorDefinition(document.nodes.find(node => node.id === trace.nodeId))!.title} · {trace.status ?? 'executed'}</Button>)}</div></> : <p>Run with market data to inspect node inputs, outputs and skipped branches.</p>}
     </section>
   </LayerCard>;
 }

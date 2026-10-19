@@ -55,3 +55,13 @@ it('imports a validated sandbox atomically and never replaces an existing flow',
   expect(() => store.import(botId, document)).toThrow('already has a flow');
   expect(store.get(botId)?.version).toBe(1);
 });
+
+it.each([1, 2])('preserves pinned directional v%s while editing wired drafts', version => {
+  const { store } = fixture();
+  const ports = version === 1 ? ['fast','slow','rsi','atr'] : ['atr'];
+  const nodes = [...ports.map(id => ({ id, type: 'process.number', version: 1, config: { value: 30 } })), { id: 'position', type: 'strategy.directional', version, config: { quotePerOrder: 15 } }];
+  let revision = 0;
+  for (const node of nodes) revision = store.edit(botId, { baseVersion: revision, operation: { type: 'upsert_node', node } }).version;
+  for (const port of ports) revision = store.edit(botId, { baseVersion: revision, operation: { type: 'connect', edge: { source: port, sourcePort: 'value', target: 'position', targetPort: port } } }).version;
+  expect(store.edit(botId, { baseVersion: revision, operation: { type: 'upsert_node', node: { ...nodes.at(-1)!, config: { quotePerOrder: 20 } } } }).document.nodes.at(-1)).toMatchObject({ version, config: { quotePerOrder: 20 } });
+});

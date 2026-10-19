@@ -10,7 +10,7 @@ import type { StrategyFlowNode } from './graph-model';
 import { programNodeSize } from './node-presentation';
 import { NodeConfiguration } from './NodeConfiguration';
 import { flowDocumentKey, useFlowWorkspaceState, type FlowWorkspaceState } from './flow-workspace-state';
-import { editorDefinitions } from './flow-editor-model';
+import { editorDefinition } from './flow-editor-model';
 const nodeTypes = { strategy: StrategyNodeCard };
 export function ChatFlowGraph({ draft, disabled, onSave, nodeApi, workspace: sharedWorkspace, onValidate }: { draft: ChatFlowDraft; onValidate?: () => Promise<void>; workspace?: FlowWorkspaceState; nodeApi?: CatbotsDesktopApi['nodes']; disabled?: boolean; onSave?: (node: ChatFlowDraft['document']['nodes'][number]) => Promise<void> }) {
   const [validationError, setValidationError] = useState('');
@@ -23,9 +23,9 @@ export function ChatFlowGraph({ draft, disabled, onSave, nodeApi, workspace: sha
   const debugRun = workspace.lastRun?.documentKey === flowDocumentKey(draft) && workspace.lastRun.run.market === workspace.market && !Object.keys(workspace.edits).length ? workspace.lastRun.run : null;
   const [selected, setSelected] = useState<string | null>(null);
   const [instance, setInstance] = useState<ReactFlowInstance<StrategyFlowNode> | null>(null);
-  const missingTypes = [...new Set(document.nodes.filter(node => !editorDefinitions.has(node.type)).map(node => node.type))];
+  const missingTypes = [...new Set(document.nodes.filter(node => !editorDefinition(node)).map(node => node.type))];
   const graph = useMemo(() => {
-    if (document.nodes.some(node => !editorDefinitions.has(node.type))) return { nodes: [] as StrategyFlowNode[], edges: [] as Edge[] };
+    if (document.nodes.some(node => !editorDefinition(node))) return { nodes: [] as StrategyFlowNode[], edges: [] as Edge[] };
     const diagram = new graphlib.Graph();
     diagram.setGraph({ rankdir: 'LR', ranksep: 48, nodesep: 48, marginx: 20, marginy: 20 });
     diagram.setDefaultEdgeLabel(() => ({}));
@@ -33,14 +33,14 @@ export function ChatFlowGraph({ draft, disabled, onSave, nodeApi, workspace: sha
     document.edges.forEach(edge => diagram.setEdge(edge.source, edge.target));
     layout(diagram);
     const nodes: StrategyFlowNode[] = document.nodes.map(node => {
-      const def = editorDefinitions.get(node.type)!;
+      const def = editorDefinition(node)!;
       const point = diagram.node(node.id);
       return { id: node.id, type: 'strategy', selected: node.id === selected, position: nodeLayout.positions[node.id] ?? { x: point.x - programNodeSize.width / 2, y: point.y - programNodeSize.height / 2 }, width: programNodeSize.width, height: programNodeSize.height,
         data: { kind: def.category, nodeType: node.type, title: def.title, summary: Object.entries(node.config).slice(0, 3).map(([key, value]) => `${key.replace(/([a-z])([A-Z])/g, '$1 $2')}: ${String(value)}`).join(' · ') || (def.category === 'trigger' ? 'Starts one evaluation' : def.category === 'data' ? 'Reads snapshot data' : def.type === 'condition.branch' ? 'Routes to true or false' : def.category === 'output' ? 'Inspect connected value' : 'Uses connected inputs'), accessibleName: `${def.category}: ${def.title}`, inputPorts: Object.keys(def.inputs), outputPorts: Object.keys(def.outputs), portTypes: { inputs: def.inputs, outputs: def.outputs }, showPorts: true } };
     });
     const edges: Edge[] = document.edges.map((edge, index) => {
       const source = document.nodes.find(node => node.id === edge.source)!;
-      const type = editorDefinitions.get(source.type)!.outputs[edge.sourcePort];
+      const type = editorDefinition(source)!.outputs[edge.sourcePort];
       return { id: `wire-${index}`, source: edge.source, target: edge.target, sourceHandle: edge.sourcePort, targetHandle: edge.targetPort, type: 'default', markerEnd: { type: MarkerType.ArrowClosed }, className: type === 'items' ? 'program-item-wire' : type === 'flow' ? 'program-flow-wire' : 'program-data-wire', label: selected === edge.source || selected === edge.target ? `${edge.sourcePort} → ${edge.targetPort}${debugRun?.trace.find(item => item.nodeId === edge.source)?.outputs[edge.sourcePort] ? ' · ' + JSON.stringify(debugRun.trace.find(item => item.nodeId === edge.source)!.outputs[edge.sourcePort]!.value).slice(0, 36) : ''}` : undefined };
     });
     return { nodes, edges };
@@ -73,7 +73,7 @@ export function ChatFlowGraph({ draft, disabled, onSave, nodeApi, workspace: sha
         <Background variant={BackgroundVariant.Dots} gap={20} size={1} />
       </ReactFlow>
     </div>
-    <Dialog.Root open={!!node && editorDefinitions.has(node.type)} onOpenChange={open => { if (!open) setSelected(null); }}><Dialog className="node-editor-dialog" aria-label="Node editor"><Dialog.Title className="sr-only">Node details</Dialog.Title>{node && <NodeConfiguration key={`${node.id}:${draft.version}`} draft={draft} node={node} nodeApi={nodeApi} disabled={disabled} onSave={onSave} onClose={() => setSelected(null)} workspace={workspace} onSelectNode={setSelected} />}</Dialog></Dialog.Root>
+    <Dialog.Root open={!!node && !!editorDefinition(node)} onOpenChange={open => { if (!open) setSelected(null); }}><Dialog className="node-editor-dialog" aria-label="Node editor"><Dialog.Title className="sr-only">Node details</Dialog.Title>{node && <NodeConfiguration key={`${node.id}:${draft.version}`} draft={draft} node={node} nodeApi={nodeApi} disabled={disabled} onSave={onSave} onClose={() => setSelected(null)} workspace={workspace} onSelectNode={setSelected} />}</Dialog></Dialog.Root>
     </div>
   </section>;
 }

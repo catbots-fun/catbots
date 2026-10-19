@@ -4,7 +4,8 @@ import { z } from 'zod';
 import { ChatFlowDocumentSchema, ChatFlowDraftSchema, ChatFlowEditSchema, type ChatFlowDraft } from '@catbots/contracts';
 import { prepareFlow } from '@catbots/strategy-runtime';
 import { runtimeNodePackages } from '@catbots/strategy-runtime';
-const definitions = new Map(runtimeNodePackages.flatMap(pkg => pkg.definitions.map(def => [def.type, def] as const)));
+const definitions = new Map(runtimeNodePackages.flatMap(pkg => pkg.definitions.map(def => [`${def.type}@${def.version}`, def] as const)));
+const definition = (node: { type: string; version: number } | undefined) => node ? definitions.get(`${node.type}@${node.version}`) : undefined;
 export class ChatFlowStore {
   constructor(private readonly path: string) {}
   private read(): Record<string, ChatFlowDraft> {
@@ -21,7 +22,7 @@ export class ChatFlowStore {
     if ((previous?.version ?? 0) !== baseVersion) throw new Error('Flow changed. Call get_flow and retry with its version.');
     const doc = structuredClone(previous?.document ?? { schemaVersion: '3.0' as const, nodes: [], edges: [] });
     if (operation.type === 'upsert_node') {
-      const def = definitions.get(operation.node.type);
+      const def = definition(operation.node);
       if (!def || def.version !== operation.node.version) throw new Error('Unknown node definition');
       const node = { ...operation.node, config: def.config.parse(operation.node.config) as Record<string, unknown> };
       const index = doc.nodes.findIndex(item => item.id === node.id);
@@ -34,8 +35,8 @@ export class ChatFlowStore {
     // Partial drafts may have unconnected inputs; existing connections must always be valid.
     const inputs = new Set<string>();
     for (const edge of doc.edges) {
-      const from = definitions.get(doc.nodes.find(node => node.id === edge.source)?.type ?? '')?.outputs[edge.sourcePort];
-      const to = definitions.get(doc.nodes.find(node => node.id === edge.target)?.type ?? '')?.inputs[edge.targetPort];
+      const from = definition(doc.nodes.find(node => node.id === edge.source))?.outputs[edge.sourcePort];
+      const to = definition(doc.nodes.find(node => node.id === edge.target))?.inputs[edge.targetPort];
       if (!from || from !== to) throw new Error('Incompatible or missing ports');
       const key = JSON.stringify([edge.target, edge.targetPort]);
       if (inputs.has(key)) throw new Error('Input already connected'); inputs.add(key);

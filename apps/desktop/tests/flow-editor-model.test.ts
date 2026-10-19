@@ -16,7 +16,7 @@ it('rejects type mismatch, duplicate input and cycles before connecting', () => 
   expect(connectionError(draft, { source: 'echo', sourcePort: 'value', target: 'echo', targetPort: 'value' })).toMatch(/cycle/);
 });
 it('every palette entry starts with valid config', () => {
-  for (const [type, definition] of editorDefinitions) expect(definition.config.safeParse(defaultConfig(type)).success, type).toBe(true);
+  for (const definition of editorDefinitions.values()) expect(definition.config.safeParse(defaultConfig(definition.type, definition.version)).success, definition.type).toBe(true);
 });
 
 it('item example validates and preserves typed drafts without migration', () => {
