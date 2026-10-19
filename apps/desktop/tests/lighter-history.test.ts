@@ -32,3 +32,26 @@ it('rejects missing candles instead of inventing or interpolating prices', async
   const request: typeof fetch = async input => Response.json(String(input).includes('orderBooks') ? {code:200,order_books:[{market_id:2,symbol:'SOL',market_type:'perp',status:'active'}]} : {code:200,c:[]});
   await expect(loadLighterHistory('SOL-PERP',0,60000,{'1m':0},new AbortController().signal,request)).rejects.toThrow('incomplete');
 });
+
+it('requests only the owned page window and ignores older lookback rows', async () => {
+  const counts: number[] = [];
+  const request: typeof fetch = async input => {
+    const url = new URL(String(input)), start = Number(url.searchParams.get('start_timestamp')) * 1000, end = Number(url.searchParams.get('end_timestamp')) * 1000;
+    if (url.pathname.endsWith('orderBooks')) return Response.json({ code: 200, order_books: [{ market_id: 2, symbol: 'SOL', market_type: 'perp', status: 'active' }] });
+    if (url.pathname.endsWith('fundings')) return Response.json({ code: 200, fundings: Array.from({ length: Math.floor((end-start)/3600000)+1 }, (_, i) => ({ timestamp: (start+i*3600000)/1000, rate: 0, direction: 'long' })) });
+    counts.push(Number(url.searchParams.get('count_back')));
+    const c = Array.from({ length: (end-start)/60000 }, (_, i) => ({ t: start+i*60000, o: 100, h: 101, l: 99, c: 100, v: 48.421 }));
+    if (start) c.unshift({ ...c[0], t: start-60000, v: 48.420999999999985 });
+    return Response.json({ code: 200, c });
+  };
+  const result = await loadLighterHistory('SOL-PERP', 0, 501*60000, { '1m': 0 }, new AbortController().signal, request);
+  expect(counts).toEqual([499, 2]);
+  expect(result.candles['1m']).toHaveLength(501);
+});
+
+it('still rejects conflicting duplicate candles inside an owned page', async () => {
+  const request: typeof fetch = async input => Response.json(String(input).includes('orderBooks')
+    ? { code: 200, order_books: [{ market_id: 2, symbol: 'SOL', market_type: 'perp', status: 'active' }] }
+    : { code: 200, c: [{ t: 0, o: 100, h: 101, l: 99, c: 100, v: 1 }, { t: 0, o: 100, h: 101, l: 99, c: 100, v: 2 }] });
+  await expect(loadLighterHistory('SOL-PERP', 0, 60000, { '1m': 0 }, new AbortController().signal, request)).rejects.toThrow('conflicting');
+});

@@ -17,8 +17,11 @@ Catbots does not request an Ethereum/L1 private key. Saved API keys are not retu
 - Orders use the bundled, hash-verified official Go WASM signer. No external signing service or runtime binary download is involved; see `apps/desktop/assets/lighter/README.md` for version and provenance.
 - Market execution uses IOC orders with a fixed 0.5% price bound. An order may cancel instead of filling outside that bound.
 - Order and paginated trade evidence must agree before a fill is confirmed. A timeout or incomplete evidence preserves the pending journal; reconciliation does not broadcast the order again.
+- Terminal fills require matching decimal base/quote totals from trade evidence. A `filled` order must be fully filled; corroborated canceled partial fills remain supported. Contradictory evidence stays unresolved.
 - Directional Pause entries continues local exit monitoring. Stop runtime does not close the position. Confirmed Close position & stop is available only for supported directional Testnet deployments, with fresh reduce-only sizing and terminal/flat checks.
 - Native exchange SL/TP is **not implemented** for Lighter in this foundation. Workflows requiring native protection remain blocked. Local exits depend on the app and network remaining available.
+
+When removing an orphan connection after a fresh account-wide flat/no-orders check, archived records retain their original inventory and an explicit verification timestamp. That resolved history does not reserve the reconnected account forever. Pending or uncertain order evidence still blocks removal, including when a legacy record has lost its pending pointer.
 
 ## Research data
 

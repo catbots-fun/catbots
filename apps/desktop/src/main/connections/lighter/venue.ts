@@ -12,6 +12,15 @@ export const ordersSchema = z.object({ orders: z.array(orderSchema) });
 const positive = z.coerce.number().finite().positive();
 const durations: Record<string, number> = { '1m':60, '5m':300, '15m':900, '30m':1800, '1h':3600, '4h':14400, '1d':86400 };
 
+/** Compare exchange decimal evidence without accumulating binary rounding error. */
+function amountsAgree(parts: string[], total: string): boolean {
+  const values = [...parts, total];
+  if (values.some(value => !/^\d+(\.\d+)?$/.test(value))) return false;
+  const scale = Math.max(...values.map(value => value.split('.')[1]?.length ?? 0));
+  if (scale > 18) return false;
+  return parts.reduce((sum, value) => sum + toUnits(value, scale), 0n) === toUnits(total, scale);
+}
+
 export class LighterFlowVenue implements FlowVenue {
   constructor(private client: LighterClient, private signer: LighterSignerPort, private credentials: LighterCredentials, private target: ExecutionTarget, private settlement = {attempts:30,delayMs:1000}) {}
   private async market() {
@@ -100,8 +109,9 @@ export class LighterFlowVenue implements FlowVenue {
     if (value.owner_account_index !== this.credentials.accountIndex || value.market_index !== market.market_id || value.is_ask !== (order.side === 'sell') || Math.abs(Number(value.initial_base_amount) - order.quantity) > 1e-8) throw new Error('LIGHTER_ORDER_IDENTITY_MISMATCH');
     if (value.status !== 'filled' && value.status !== 'canceled' && !value.status.startsWith('canceled-')) return undefined;
     const quantity = Number(value.filled_base_amount);
-    if (quantity === 0) return value.status === 'filled' ? undefined : null;
+    if (quantity === 0) return value.status !== 'filled' && Number(value.filled_quote_amount) === 0 ? null : undefined;
     if (quantity < 0 || quantity > order.quantity) throw new Error('LIGHTER_FILL_INVALID');
+    if (value.status === 'filled' && !amountsAgree([value.filled_base_amount], value.initial_base_amount)) return undefined;
     const pageSchema = z.object({ next_cursor: z.string().optional(), trades: z.array(z.object({ trade_id_str: z.string(), ask_id_str: z.string(), bid_id_str: z.string(), ask_account_id: z.number(), bid_account_id: z.number(), is_maker_ask: z.boolean(), size: decimal, usd_amount: decimal, taker_fee: z.number().optional(), maker_fee: z.number().optional() })) });
     const trades: z.infer<typeof pageSchema>['trades'] = [];
     const cursors = new Set<string>(); let cursor = '';
@@ -112,7 +122,10 @@ export class LighterFlowVenue implements FlowVenue {
       cursors.add(cursor);
     } while (cursor);
     const matched = trades.filter(t => order.side === 'sell' ? t.ask_id_str === value.order_id && t.ask_account_id === this.credentials.accountIndex : t.bid_id_str === value.order_id && t.bid_account_id === this.credentials.accountIndex);
-    if (new Set(matched.map(t => t.trade_id_str)).size !== matched.length || Math.abs(matched.reduce((sum,t) => sum+Number(t.size),0) - quantity) > 1e-8) return undefined;
+    if (new Set(matched.map(t => t.trade_id_str)).size !== matched.length ||
+      matched.some(t => Number(t.size) <= 0 || Number(t.usd_amount) <= 0) ||
+      !amountsAgree(matched.map(t => t.size), value.filled_base_amount) ||
+      !amountsAgree(matched.map(t => t.usd_amount), value.filled_quote_amount)) return undefined;
     const fee = matched.reduce((sum,t) => sum + Number(t.usd_amount) * ((t.is_maker_ask === (order.side === 'sell') ? t.maker_fee : t.taker_fee) ?? 0) / 1_000_000, 0);
     const price = Number(value.filled_quote_amount) / quantity;
     if (!Number.isFinite(price) || price <= 0 || !Number.isFinite(fee)) return undefined;

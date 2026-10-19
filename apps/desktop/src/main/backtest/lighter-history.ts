@@ -31,9 +31,10 @@ export async function loadLighterHistory(market:string, from:number, to:number, 
     const rows = new Map<number,z.infer<typeof candle>>();
     for (let cursor=start;cursor<end;cursor+=499*duration) {
       const last=Math.min(end,cursor+499*duration);
-      const page=z.object({c:z.array(candle).max(501)}).parse(await get('candles',{market_id:book.market_id,resolution:timeframe,start_timestamp:cursor/1000,end_timestamp:last/1000,count_back:500}));
+      const page=z.object({c:z.array(candle).max(501)}).parse(await get('candles',{market_id:book.market_id,resolution:timeframe,start_timestamp:cursor/1000,end_timestamp:last/1000,count_back:(last-cursor)/duration}));
       for (const bar of page.c) {
-        if (bar.t<start || bar.t>=end) continue;
+        // count_back can include rows before start_timestamp; own only this page.
+        if (bar.t<cursor || bar.t>=last) continue;
         if (bar.t%duration!==0 || bar.h<Math.max(bar.o,bar.c,bar.l) || bar.l>Math.min(bar.o,bar.c)) throw new Error('Lighter invalid historical candle');
         const prior=rows.get(bar.t);
         if (prior && JSON.stringify(prior)!==JSON.stringify(bar)) throw new Error('Lighter conflicting historical candles');

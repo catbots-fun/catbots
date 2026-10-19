@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -35,7 +35,7 @@ function fixture(environment: 'testnet' | 'production' = 'testnet') {
   };
   const adapter: ExchangeAdapter = { descriptor: { id: 'lighter', name: 'Lighter', environments: ['testnet', 'production'], authentication: ['api-key'], capabilities: { accountDiscovery: true, markets: ['perpetual'], trading: true } }, normalizeOwner: value => value, discover: async () => connection.accounts, verify: async () => true, createVenue: async () => venue, connectApiKey: async input => ({ ...connection, id: input.id, owner: String(input.accountIndex) }) };
   const draft = { botId, version: 1, status: 'valid' as const, document: flow, updatedAt: new Date().toISOString() };
-  const service = (dex = 'lighter') => { const value = new ConnectionsService(path, [adapter], undefined, undefined, () => draft, () => true, undefined, () => dex, network => network === 'testnet'); resources.push(value); return value; };
+  const service = (dex = 'lighter', botExists = (_id: string) => true) => { const value = new ConnectionsService(path, [adapter], undefined, undefined, () => draft, botExists, undefined, () => dex, network => network === 'testnet'); resources.push(value); return value; };
   return { path, connection, adapter, venue, submitted, service };
 }
 it('saves an API-key account through its adapter without returning the input secret', async () => {
@@ -63,4 +63,41 @@ it('closes a persisted directional position through its selected adapter without
   const result = await f.service().command({ action: 'close_flow_position', botId, deploymentId: started.id, confirmation: 'CLOSE SOL-PERP' });
   expect(result.deployment).toMatchObject({ closeResult: 'closed', position: 0 });
   expect(f.submitted[1]).toMatchObject({ side: 'sell', quantity: .2, reduceOnly: true });
+});
+
+it.each([.2, undefined])('releases verified-flat orphan ownership for a new close after restart (old position %s)', async expectedPosition => {
+  vi.useFakeTimers(); vi.setSystemTime(new Date('2026-10-19T00:00:00Z'));
+  const f = fixture(), oldBot = '00000000-0000-4000-8000-000000000009', oldTarget = { ...target, botId: oldBot };
+  writeFileSync(`${f.path}.targets`, JSON.stringify({ [oldBot]: oldTarget }));
+  writeFileSync(`${f.path}.runtime`, JSON.stringify({ [oldBot]: {
+    view: { id: 'old-deployment', botId: oldBot, version: 1, environment: 'testnet', target: oldTarget, status: 'stopped', startedAt: new Date().toISOString(), cycles: 0, orders: [], events: [], position: expectedPosition },
+    document: flow, target: oldTarget, state: {}, fills: [], lastBucket: -1, expectedPosition,
+  } }));
+  f.adapter.activity = async () => ({ fetchedAt: new Date().toISOString(), positions: [], orders: [] });
+  const service = f.service('lighter', id => id !== oldBot);
+  await service.command({ action: 'remove', id: connectionId });
+  const connected = await service.command({ action: 'connect_api_key', adapterId: 'lighter', name: 'Reconnected', environment: 'testnet', accountIndex: 12, apiKeyIndex: 4, apiPrivateKey: '1'.repeat(80) });
+  const nextTarget = { ...target, connectionId: connected.connections[0].id };
+  await service.command({ action: 'save_target', target: nextTarget });
+  const started = await service.command({ action: 'start_flow', botId, version: 1, confirmation: 'testnet:SOL-PERP' });
+  await vi.advanceTimersByTimeAsync(1000); await service.dispose();
+  const closed = await f.service().command({ action: 'close_flow_position', botId, deploymentId: started.deployment!.id, confirmation: 'CLOSE SOL-PERP' });
+  expect(closed.deployment).toMatchObject({ closeResult: 'closed', position: 0 });
+  expect(f.submitted).toHaveLength(2);
+  expect(f.submitted[1]).toMatchObject({ reduceOnly: true, quantity: .2 });
+  const archived = JSON.parse(readFileSync(`${f.path}.runtime.history`, 'utf8'))[0];
+  expect(archived.expectedPosition).toBe(expectedPosition);
+  expect(archived.orphanAccountVerifiedFlatAt).toBe('2026-10-19T00:00:00.000Z');
+});
+
+it('does not release an orphan with uncertain order evidence even if its pending pointer is absent', async () => {
+  const f = fixture();
+  writeFileSync(`${f.path}.runtime`, JSON.stringify({ [botId]: {
+    view: { id: 'uncertain-deployment', botId, version: 1, environment: 'testnet', target, status: 'failed', startedAt: new Date().toISOString(), cycles: 0, orders: [{ status: 'uncertain' }], events: [] },
+    document: flow, target, state: {}, fills: [], lastBucket: -1,
+  } }));
+  f.adapter.activity = async () => ({ fetchedAt: new Date().toISOString(), positions: [], orders: [] });
+  const service = f.service('lighter', () => false);
+  await expect(service.command({ action: 'remove', id: connectionId })).rejects.toThrow('Cannot remove an active runtime record');
+  expect((await service.command({ action: 'list' })).connections).toHaveLength(1);
 });

@@ -182,6 +182,7 @@ type Stored = {
   expectedPosition?: number;
   lastRiskAt?: number;
   manualClose?: boolean;
+  orphanAccountVerifiedFlatAt?: string;
 };
 export class FlowRunner {
   private audit: FlowAuditStore;
@@ -329,7 +330,7 @@ export class FlowRunner {
     if (this.reconciling.has(botId) || this.accountReserved(record.target, record.view.environment, botId)) throw new Error('Account operation already in progress');
     if (Object.values(this.records).some(other => other.pending && !(other === record && this.active.has(botId)) && other.view.environment === record.view.environment &&
         (other.target.accountId === record.target.accountId || other.target.connectionId === record.target.connectionId))) throw new Error('Account has an unresolved order; reconcile before closing');
-    if ([...Object.values(this.records), ...this.archives].some(other => other !== record && other.view.environment === record.view.environment &&
+    if ([...Object.values(this.records), ...this.archives.filter(other => !other.orphanAccountVerifiedFlatAt)].some(other => other !== record && other.view.environment === record.view.environment &&
         (other.target.accountId === record.target.accountId || other.target.connectionId === record.target.connectionId) &&
         (other.pending || (other.manualClose && other.view.closeResult !== 'closed') || other.expectedPosition !== 0)))
       throw new Error('Account ownership is ambiguous; inspect other deployments before closing');
@@ -771,18 +772,23 @@ export class FlowRunner {
           this.active.has(botId) ||
           this.reconciling.has(botId) ||
           record.pending !== undefined ||
+          record.view.orders.some(order => ['submitting', 'uncertain'].includes(order.status)) ||
           ['running', 'stopping', 'interrupted'].includes(record.view.status),
       )
     )
       throw new Error('Cannot remove an active runtime record');
     if (removed.length === 0) return;
+    // Only called after fresh, account-wide flat/no-orders verification by the service.
+    // Preserve original inventory in history, but release its historical ownership.
+    const verifiedFlatAt = new Date().toISOString();
+    const removedIds = new Set(removed.map(([, record]) => record.view.id));
     const archivedIds = new Set(this.archives.map((record) => record.view.id));
     const nextArchives = [
-      ...this.archives,
+      ...this.archives.map(record => removedIds.has(record.view.id) ? { ...record, orphanAccountVerifiedFlatAt: verifiedFlatAt } : record),
       ...removed
         .map(([, record]) => record)
         .filter((record) => !archivedIds.has(record.view.id))
-        .map((record) => structuredClone(record)),
+        .map((record) => ({ ...structuredClone(record), orphanAccountVerifiedFlatAt: verifiedFlatAt })),
     ];
     writeFileSync(`${this.path}.history.tmp`, JSON.stringify(nextArchives), {
       mode: 0o600,

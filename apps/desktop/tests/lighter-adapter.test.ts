@@ -44,6 +44,16 @@ describe('Lighter connections',()=>{
 describe('Lighter execution recovery',()=>{
  const cloid='0xabcd' as const;
  const order={clientOrderId:'intent',side:'buy',quantity:0.01,reduceOnly:false} as OrderPlan;
+ it.each(['quote', 'incomplete-filled', 'negative-trade', 'zero-base-nonzero-quote'] as const)('keeps contradictory %s evidence unresolved', async mode => {
+  const request = transport(path => path === 'orderBooks' ? { order_books: [market] } : path === 'accountOrders'
+   ? { orders: [{ client_order_index: clientOrderIndex(cloid), order_id: '42', market_index: 0, owner_account_index: 12, is_ask: false, status: mode === 'incomplete-filled' ? 'filled' : 'canceled', initial_base_amount: '0.01', filled_base_amount: mode === 'zero-base-nonzero-quote' ? '0' : '0.005', filled_quote_amount: '12', price: '2400' }] }
+   : { trades: mode === 'negative-trade'
+     ? [{ trade_id_str: '7', ask_id_str: '41', bid_id_str: '42', ask_account_id: 99, bid_account_id: 12, is_maker_ask: true, size: '0.01', usd_amount: '24' }, { trade_id_str: '8', ask_id_str: '41', bid_id_str: '42', ask_account_id: 99, bid_account_id: 12, is_maker_ask: true, size: '-0.005', usd_amount: '-12' }]
+     : [{ trade_id_str: '7', ask_id_str: '41', bid_id_str: '42', ask_account_id: 99, bid_account_id: 12, is_maker_ask: true, size: '0.005', usd_amount: mode === 'quote' ? '24' : '12' }] });
+  const venue = new LighterFlowVenue(new LighterClient('testnet', request), signer(), credentials, target);
+  expect(await venue.reconcile(order, cloid)).toBeUndefined();
+  expect(vi.mocked(request).mock.calls.some(([url]) => String(url).includes('sendTx'))).toBe(false);
+ });
  it('recovers older orders through paginated inactive history',async()=>{
   const request=transport((path,url)=>path==='orderBooks'?{order_books:[market]}:path==='accountInactiveOrders'?url.searchParams.has('cursor')?{orders:[{client_order_index:clientOrderIndex(cloid),order_id:'42',market_index:0,owner_account_index:12,is_ask:false,status:'canceled',initial_base_amount:'0.01',filled_base_amount:'0',filled_quote_amount:'0',price:'2400'}]}:{orders:[],next_cursor:'older'}:{orders:[]});
   const venue=new LighterFlowVenue(new LighterClient('testnet',request),signer(),credentials,target);
