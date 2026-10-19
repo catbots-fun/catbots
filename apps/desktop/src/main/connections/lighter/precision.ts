@@ -1,5 +1,11 @@
 import { createHash } from 'node:crypto';
 
+/** The cancel API also accepts client aliases below 2^48. Protection must use
+ * the verified exchange namespace, never an alias (pinned txtypes/constants.go). */
+export function isExchangeOrderId(value: string): boolean {
+  return /^\d+$/.test(value) && BigInt(value) >= 2n ** 48n && BigInt(value) < 2n ** 60n;
+}
+
 /** Convert human decimals to integer wire units without binary rounding. */
 export function toUnits(value: string, decimals: number, rounding: 'down' | 'up' = 'down'): bigint {
   if (!Number.isInteger(decimals) || decimals < 0 || decimals > 18 || !/^\d+(\.\d+)?$/.test(value)) {
