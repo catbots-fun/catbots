@@ -73,7 +73,9 @@ export function ExecutionTargetPanel({
     };
   }, [api, botId]);
   const [deployment, setDeployment] = useState<FlowDeployment>(),
-    [confirmation, setConfirmation] = useState("");
+    [confirmation, setConfirmation] = useState(""),
+    [closeConfirmation, setCloseConfirmation] = useState('');
+  useEffect(() => { setCloseConfirmation(''); }, [botId, deployment?.id]);
   useEffect(() => {
     if (!api) return;
     let active = true;
@@ -98,6 +100,16 @@ export function ExecutionTargetPanel({
   }, [api, botId]);
   const running =
     deployment?.status === "running" || deployment?.status === "stopping";
+  const closePosition = async () => {
+    if (!api || !deployment) return;
+    setBusy(true); setError('');
+    try {
+      const next = await api.command({ action: 'close_flow_position', botId, deploymentId: deployment.id, confirmation: closeConfirmation });
+      setDeployment(next.deployment);
+    } catch {
+      setError('Close could not be confirmed. Refresh and reconcile with the exchange before retrying; a request may already have been sent.');
+    } finally { setCloseConfirmation(''); setBusy(false); }
+  };
   const toggleEntries = async () => {
     if (!api || !deployment) return;
     setBusy(true); setError('');
@@ -181,12 +193,20 @@ export function ExecutionTargetPanel({
           </div>
           {deployment.entriesPaused && <p role="status">Entries paused. Risk checks and exits continue while the runtime is running. Orders already submitted still await their outcome.</p>}
           <p className="backtest-muted">Stop runtime stops local checks; it does not close positions or cancel exchange protection.</p>
+          {deployment.closePositionSupported && deployment.closeResult !== 'closed' && <div>
+            <p>Close this deployment’s {deployment.target.market} position using a reduce-only market order, then stop. Partial or uncertain results require review.</p>
+            <p>Type <code>{`CLOSE ${deployment.target.market}`}</code> to confirm.</p>
+            <Input size="base" label="Close confirmation" value={closeConfirmation} disabled={busy} onChange={event => setCloseConfirmation(event.target.value)} />
+            <Button size="base" variant="destructive" disabled={busy || deployment.status === 'stopping' || deployment.orders.some(order => ['uncertain','submitting'].includes(order.status)) || closeConfirmation !== `CLOSE ${deployment.target.market}`} onClick={() => void closePosition()}>Close position &amp; stop</Button>
+          </div>}
+          {deployment.closeResult && <p role="status">{deployment.closeResult === 'closed' ? 'Close verified: the exchange reported a flat position.' : deployment.closeResult === 'pending' ? 'Close submitted. Waiting for a confirmed result.' : 'Close needs attention. Inspect remaining position and reconcile before retrying.'}</p>}
           <dl className="deploy-stats">
             <div><dt>Evaluations</dt><dd>{deployment.cycles}</dd></div>
             <div><dt>Orders this run</dt><dd>{deployment.orders.length}</dd></div>
             <div><dt>Last evaluation</dt><dd>{deployment.lastRunAt ? new Date(deployment.lastRunAt).toLocaleTimeString() : 'Waiting'}</dd></div>
           </dl>
           {(deployment.orders.some((order) => order.status === "uncertain") ||
+            deployment.closeResult === 'needs-attention' ||
             !!deployment.protection ||
             deployment.status === "failed") && (
             <Button

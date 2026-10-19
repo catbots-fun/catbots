@@ -9,6 +9,12 @@ const directories:string[]=[];
 afterEach(()=>directories.splice(0).forEach(path=>rmSync(path,{recursive:true,force:true})));
 const file=()=>{const path=mkdtempSync(join(tmpdir(),'connections-'));directories.push(path);return join(path,'saved.json');};
 const owner='0x'+'1'.repeat(40),sub='0x'+'2'.repeat(40);
+it('rejects close requests without a supported saved deployment or valid schema',async()=>{
+ const service=new ConnectionsService(file(),[]);
+ const request={action:'close_flow_position',botId:'00000000-0000-4000-8000-000000000001',deploymentId:'00000000-0000-4000-8000-000000000002',confirmation:'CLOSE SOL-PERP'};
+ await expect(service.command(request)).rejects.toThrow('deployment');
+ for(const change of [{deploymentId:undefined},{confirmation:''},{extra:true}]) await expect(service.command({...request,...change})).rejects.toThrow();
+});
 it('validates deployment-bound entry control commands before reaching the runner', async()=>{
  const service=new ConnectionsService(file(),[]);
  const request={action:'set_flow_entries_paused',botId:'00000000-0000-4000-8000-000000000001',deploymentId:'00000000-0000-4000-8000-000000000002',paused:true};

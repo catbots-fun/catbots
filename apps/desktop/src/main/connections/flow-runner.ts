@@ -177,6 +177,7 @@ type Stored = {
   pendingOrder?: OrderPlan;
   expectedPosition?: number;
   lastRiskAt?: number;
+  manualClose?: boolean;
 };
 export class FlowRunner {
   private audit: FlowAuditStore;
@@ -248,8 +249,104 @@ export class FlowRunner {
   }
   get(botId: string) {
     return this.records[botId]
-      ? { ...structuredClone(this.records[botId].view), entryPauseSupported: this.records[botId].document.nodes.some(hasRiskEvaluation) }
+      ? { ...structuredClone(this.records[botId].view), entryPauseSupported: this.records[botId].document.nodes.some(hasRiskEvaluation), closePositionSupported: this.supportsClose(this.records[botId]) }
       : undefined;
+  }
+  private supportsClose(record: Stored) {
+    return record.view.environment === 'testnet' && !record.protection && record.document.nodes.some(node => node.type === 'strategy.directional');
+  }
+  private accountReserved(target: ExecutionTarget, environment: string, except: string) {
+    return [...new Set([...this.active.keys(), ...this.reconciling])].some(id => {
+      const other = this.records[id];
+      return id !== except && other && other.view.environment === environment &&
+        (other.target.accountId === target.accountId || other.target.connectionId === target.connectionId);
+    });
+  }
+  private accountUnresolved(target: ExecutionTarget, environment: string) {
+    return Object.values(this.records).some(other => other.view.environment === environment &&
+      (other.target.accountId === target.accountId || other.target.connectionId === target.connectionId) &&
+      (other.pending || (other.manualClose && other.view.closeResult !== 'closed')));
+  }
+  isBusy(botId: string) { return this.active.has(botId) || this.reconciling.has(botId); }
+  private acceptCloseResult(record: Stored, fill: Fill | null) {
+    const order = record.pendingOrder!;
+    if (fill) {
+      if (!fill.id || fill.clientOrderId !== order.clientOrderId || fill.side !== order.side ||
+          !Number.isFinite(fill.quantity) || fill.quantity <= 0 || fill.quantity > order.quantity + 1e-8 ||
+          !Number.isFinite(fill.price) || fill.price <= 0 || !Number.isFinite(fill.fee)) throw new Error('Invalid close fill; reconcile with exchange');
+      record.expectedPosition = (record.expectedPosition ?? 0) + (fill.side === 'buy' ? fill.quantity : -fill.quantity);
+      if (Math.abs(record.expectedPosition) < 1e-10) record.expectedPosition = 0;
+      record.view.position = record.expectedPosition;
+    }
+    Object.assign(record.view.orders.at(-1)!, { status: fill ? 'filled' : 'cancelled', quantity: fill?.quantity, price: fill?.price, fee: fill?.fee, side: order.side, exchangeOrderId: fill?.id });
+    record.pending = undefined; record.pendingOrder = undefined;
+    record.view.closeResult = 'needs-attention'; record.view.status = 'stopped';
+    this.persist();
+    this.safetyAudit(record, 'order_outcome', { source: 'manual_close', order: record.view.orders.at(-1), position: record.view.position });
+  }
+  private async verifyClose(record: Stored, venue: FlowVenue) {
+    const snapshot = await venue.snapshot([]);
+    if (snapshot.context.market !== record.target.market || !Number.isFinite(snapshot.position) ||
+        !Number.isFinite(record.expectedPosition) || Math.abs(snapshot.position - record.expectedPosition!) > 1e-8 || snapshot.openOrders !== 0)
+      throw new Error('Close verification differs from confirmed inventory or has open orders; inspect exchange');
+    record.view.closeResult = snapshot.position === 0 ? 'closed' : 'needs-attention';
+    record.view.status = 'stopped';
+    record.view.error = snapshot.position === 0 ? undefined : 'Position remains open. Review the exchange before confirming another close.';
+    this.persist();
+    this.safetyAudit(record, 'lifecycle', { event: 'close_verified', result: record.view.closeResult, position: snapshot.position });
+  }
+  async closePosition(botId: string, deploymentId: string, confirmation: string, venue: FlowVenue) {
+    const record = this.records[botId];
+    if (!record || record.view.id !== deploymentId) throw new Error('Deployment changed; refresh before closing');
+    if (!this.supportsClose(record)) throw new Error('Close position is supported only for directional Testnet deployments without native protection');
+    if (confirmation !== `CLOSE ${record.target.market}`) throw new Error('Exact market confirmation required');
+    if (this.reconciling.has(botId) || this.accountReserved(record.target, record.view.environment, botId)) throw new Error('Account operation already in progress');
+    if (Object.values(this.records).some(other => other.pending && !(other === record && this.active.has(botId)) && other.view.environment === record.view.environment &&
+        (other.target.accountId === record.target.accountId || other.target.connectionId === record.target.connectionId))) throw new Error('Account has an unresolved order; reconcile before closing');
+    if ([...Object.values(this.records), ...this.archives].some(other => other !== record && other.view.environment === record.view.environment &&
+        (other.target.accountId === record.target.accountId || other.target.connectionId === record.target.connectionId) &&
+        (other.pending || (other.manualClose && other.view.closeResult !== 'closed') || other.expectedPosition !== 0)))
+      throw new Error('Account ownership is ambiguous; inspect other deployments before closing');
+    this.reconciling.add(botId);
+    try {
+      await this.stop(botId);
+      if (record.pending) throw new Error('Order outcome unresolved; reconcile before closing');
+      const snapshot = await venue.snapshot([]);
+      if (!Number.isFinite(record.expectedPosition) || !Number.isFinite(snapshot.position) || Math.abs(snapshot.position - record.expectedPosition!) > 1e-8 || snapshot.context.market !== record.target.market)
+        throw new Error('Account position changed outside this deployment');
+      if (snapshot.openOrders !== 0) throw new Error('Resolve open orders before closing');
+      record.manualClose = true;
+      record.view.entriesPaused = true;
+      record.view.closeResult = 'needs-attention';
+      this.persist();
+      if (snapshot.position === 0) {
+        await this.verifyClose(record, venue);
+        return this.get(botId)!;
+      }
+      const cloid = `0x${randomUUID().replaceAll('-', '')}` as `0x${string}`;
+      const order = guardOrder({ clientOrderId: cloid, side: snapshot.position > 0 ? 'sell' : 'buy', quantity: Math.abs(snapshot.position), reduceOnly: true, purpose: 'exit' }, snapshot, record.target);
+      this.auditEvent(record, 'order_intent', { source: 'manual_close', cloid, order });
+      record.pending = cloid; record.pendingOrder = order;
+      record.view.status = 'stopping'; record.view.closeResult = 'pending';
+      record.view.orders.push({ id: cloid, status: 'submitting', at: new Date().toISOString() });
+      this.persist();
+      const fill = await venue.place(order, cloid, snapshot);
+      this.acceptCloseResult(record, fill);
+      await this.verifyClose(record, venue);
+      return this.get(botId)!;
+    } catch (error) {
+      if (record.manualClose) {
+        if (record.pending) {
+          record.view.orders.at(-1)!.status = error instanceof OrderRejectedError ? 'rejected' : 'uncertain';
+          if (error instanceof OrderRejectedError) { record.pending = undefined; record.pendingOrder = undefined; }
+        }
+        record.view.status = 'failed'; record.view.closeResult = 'needs-attention';
+        record.view.error = error instanceof Error ? error.message : 'Close failed';
+        this.persist();
+        this.safetyAudit(record, 'failure', { source: 'manual_close', pending: record.pending, error: record.view.error });
+      }
+      throw error;
+    } finally { this.reconciling.delete(botId); }
   }
   setEntriesPaused(botId: string, deploymentId: string, paused: boolean) {
     const record = this.records[botId];
@@ -278,6 +375,9 @@ export class FlowRunner {
   ) {
     if (this.active.has(botId) || this.reconciling.has(botId))
       throw new Error("Bot is already running or reconciling");
+    if (this.accountReserved(target, environment, botId)) throw new Error('Another operation is using this account');
+    if (this.accountUnresolved(target, environment)) throw new Error('Account has an unresolved order or close; reconcile before starting');
+    if (this.records[botId]?.manualClose && this.records[botId].view.closeResult !== 'closed') throw new Error('Verify the previous close before starting a new deployment');
     if (this.records[botId]?.pending)
       throw new Error(
         "Previous order outcome is unresolved. Exchange reconciliation is required before restart.",
@@ -316,7 +416,7 @@ export class FlowRunner {
       throw new Error("No available collateral");
     // Recheck after asynchronous preflight to prevent duplicate starts.
     if (
-      this.active.has(botId) ||
+      this.active.has(botId) || this.reconciling.has(botId) || this.accountReserved(target, environment, botId) || this.accountUnresolved(target, environment) ||
       [...this.active.keys()].some(
         (id) =>
           this.records[id].view.environment === environment &&
@@ -325,9 +425,14 @@ export class FlowRunner {
       )
     )
       throw new Error("Account already running");
+    // Hold the account across the final asynchronous protection initialization.
+    // A close must not stop an empty active slot just before start installs it.
+    this.reconciling.add(botId);
+    try {
     const prior = this.records[botId];
     const same =
       prior &&
+      !prior.manualClose &&
       !prior.nativeCompleted &&
       prior.view.version === version &&
       JSON.stringify(prior.document) === JSON.stringify(document) &&
@@ -394,6 +499,7 @@ export class FlowRunner {
     });
     this.schedule(botId);
     return this.get(botId)!;
+    } finally { this.reconciling.delete(botId); }
   }
   private timeframes(doc: FlowDocument) {
     return [
@@ -593,7 +699,7 @@ export class FlowRunner {
     }
   }
   connectionRunning(connectionId: string) {
-    return [...this.active.keys()].some(
+    return [...new Set([...this.active.keys(), ...this.reconciling])].some(
       (id) => this.records[id].target.connectionId === connectionId,
     );
   }
@@ -831,6 +937,8 @@ export class FlowRunner {
   async reconcile(botId: string, venue: FlowVenue) {
     if (this.reconciling.has(botId))
       throw new Error("Reconciliation already in progress");
+    const targetRecord = this.records[botId];
+    if (targetRecord && this.accountReserved(targetRecord.target, targetRecord.view.environment, botId)) throw new Error('Another operation is using this account');
     this.reconciling.add(botId);
     const record = this.records[botId];
     let accepted = false;
@@ -840,6 +948,17 @@ export class FlowRunner {
         throw new Error("Stop the bot before reconciling");
       accepted = !!record;
       if (record) this.safetyAudit(record, 'reconciliation', { event: 'requested', pending });
+      if (record?.manualClose) {
+        if (record.pending) {
+          if (!record.pendingOrder || !venue.reconcile) throw new Error('Pending close requires exchange reconciliation');
+          const fill = await venue.reconcile(record.pendingOrder, record.pending as `0x${string}`);
+          if (fill === undefined) throw new Error('Exchange has not confirmed a terminal outcome. No order was resent.');
+          this.acceptCloseResult(record, fill);
+        }
+        await this.verifyClose(record, venue);
+        this.safetyAudit(record, 'reconciliation', { event: 'completed', source: 'manual_close', pending, result: record.view.closeResult });
+        return this.get(botId);
+      }
       if (record) requireProtectionCapability(record.document, record.view.environment, venue, !!record.protection);
       if (record?.protection && venue.protection)
         await this.syncProtection(record, venue, await venue.snapshot([]));
