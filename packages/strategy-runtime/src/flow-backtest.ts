@@ -20,7 +20,7 @@ export function flowHistoryRequirements(document: FlowDocument, settings: FlowBa
     counts[config.timeframe] = Math.max(counts[config.timeframe] ?? 0, config.count);
   }
   const steps = (Date.parse(settings.to) - Date.parse(settings.from)) / intervalMs(settings.timeframe);
-  if (!Number.isInteger(steps) || steps < 2 || steps > 5000) throw new Error('Choose between 2 and 5000 complete replay bars');
+  if (!Number.isInteger(steps) || steps < 2 || steps > 100000) throw new Error('Choose between 2 and 100000 complete replay bars');
   if (Date.parse(settings.from) % intervalMs(settings.timeframe) || Date.parse(settings.to) % intervalMs(settings.timeframe)) throw new Error('Dates must align with the replay interval');
   if (Object.keys(counts).length > 4) throw new Error('At most four candle intervals are supported');
   if (steps * document.nodes.length * Math.max(...Object.values(counts)) > 100_000_000) throw new Error('Replay work limit exceeded; reduce the range, candle count or nodes');

@@ -30,7 +30,7 @@ export type CommunityNode = z.infer<typeof CommunityNodeSchema>;
 export type InstalledNodePackage = { manifest: NodePackage; integrity: string; enabled: boolean };
 export const NodePackageCommandSchema = z.discriminatedUnion('action', [
   MarketSnapshotRequestSchema,
-  z.object({ action: z.literal('market_catalog') }).strict(),
+  z.object({ action: z.literal('market_catalog'), dex: z.enum(['hyperliquid','lighter']).optional(), environment: z.enum(['production','testnet']).optional() }).strict(),
   z.object({ action: z.literal('get_workspace_market'), botId: z.string().uuid() }).strict(),
   z.object({ action: z.literal('save_workspace_market'), botId: z.string().uuid(), market: z.string().regex(/^[A-Z0-9]{1,20}-PERP$/) }).strict(),
   ...FlowBacktestCommandSchema.options,

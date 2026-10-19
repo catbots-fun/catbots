@@ -182,6 +182,7 @@ type Stored = {
   expectedPosition?: number;
   lastRiskAt?: number;
   manualClose?: boolean;
+  orphanAccountVerifiedFlatAt?: string;
 };
 export class FlowRunner {
   private audit: FlowAuditStore;
@@ -227,8 +228,11 @@ export class FlowRunner {
     for (const item of interrupted) this.safetyAudit(item, 'lifecycle', { event: 'interrupted', status: item.view.status, pending: item.pending });
   }
   private persist() {
+    this.persistRecords(this.records);
+  }
+  private persistRecords(records: Record<string, Stored>) {
     mkdirSync(dirname(this.path), { recursive: true });
-    writeFileSync(`${this.path}.tmp`, JSON.stringify(this.records), {
+    writeFileSync(`${this.path}.tmp`, JSON.stringify(records), {
       mode: 0o600,
     });
     renameSync(`${this.path}.tmp`, this.path);
@@ -326,7 +330,7 @@ export class FlowRunner {
     if (this.reconciling.has(botId) || this.accountReserved(record.target, record.view.environment, botId)) throw new Error('Account operation already in progress');
     if (Object.values(this.records).some(other => other.pending && !(other === record && this.active.has(botId)) && other.view.environment === record.view.environment &&
         (other.target.accountId === record.target.accountId || other.target.connectionId === record.target.connectionId))) throw new Error('Account has an unresolved order; reconcile before closing');
-    if ([...Object.values(this.records), ...this.archives].some(other => other !== record && other.view.environment === record.view.environment &&
+    if ([...Object.values(this.records), ...this.archives.filter(other => !other.orphanAccountVerifiedFlatAt)].some(other => other !== record && other.view.environment === record.view.environment &&
         (other.target.accountId === record.target.accountId || other.target.connectionId === record.target.connectionId) &&
         (other.pending || (other.manualClose && other.view.closeResult !== 'closed') || other.expectedPosition !== 0)))
       throw new Error('Account ownership is ambiguous; inspect other deployments before closing');
@@ -738,6 +742,81 @@ export class FlowRunner {
     return [...new Set([...this.active.keys(), ...this.reconciling])].some(
       (id) => this.records[id].target.connectionId === connectionId,
     );
+  }
+  botUnresolved(botId: string) {
+    const record = this.records[botId];
+    return record !== undefined && this.recordUnresolved(record);
+  }
+  connectionActive(connectionId: string) {
+    return Object.values(this.records).some(
+      (record) =>
+        record.target.connectionId === connectionId &&
+        ['running', 'stopping', 'interrupted'].includes(record.view.status),
+    );
+  }
+  connectionUnresolvedTargets(connectionId: string) {
+    return Object.values(this.records)
+      .filter(
+        (record) =>
+          record.target.connectionId === connectionId &&
+          this.recordUnresolved(record),
+      )
+      .map((record) => structuredClone(record.target));
+  }
+  removeTerminalRecords(botIds: string[]) {
+    const ids = new Set(botIds);
+    const removed = Object.entries(this.records).filter(([botId]) => ids.has(botId));
+    if (
+      removed.some(
+        ([botId, record]) =>
+          this.active.has(botId) ||
+          this.reconciling.has(botId) ||
+          record.pending !== undefined ||
+          record.view.orders.some(order => ['submitting', 'uncertain'].includes(order.status)) ||
+          ['running', 'stopping', 'interrupted'].includes(record.view.status),
+      )
+    )
+      throw new Error('Cannot remove an active runtime record');
+    if (removed.length === 0) return;
+    // Only called after fresh, account-wide flat/no-orders verification by the service.
+    // Preserve original inventory in history, but release its historical ownership.
+    const verifiedFlatAt = new Date().toISOString();
+    const removedIds = new Set(removed.map(([, record]) => record.view.id));
+    const archivedIds = new Set(this.archives.map((record) => record.view.id));
+    const nextArchives = [
+      ...this.archives.map(record => removedIds.has(record.view.id) ? { ...record, orphanAccountVerifiedFlatAt: verifiedFlatAt } : record),
+      ...removed
+        .map(([, record]) => record)
+        .filter((record) => !archivedIds.has(record.view.id))
+        .map((record) => ({ ...structuredClone(record), orphanAccountVerifiedFlatAt: verifiedFlatAt })),
+    ];
+    writeFileSync(`${this.path}.history.tmp`, JSON.stringify(nextArchives), {
+      mode: 0o600,
+    });
+    renameSync(`${this.path}.history.tmp`, `${this.path}.history`);
+    this.archives = nextArchives;
+    const next = Object.fromEntries(
+      Object.entries(this.records).filter(([botId]) => !ids.has(botId)),
+    );
+    this.persistRecords(next);
+    this.records = next;
+  }
+  private recordUnresolved(record: Stored) {
+    const expectedPositionKnown = Number.isFinite(record.expectedPosition);
+    const legacyPositionKnown = Number.isFinite(record.view.position);
+    const positionIsProvablyFlat =
+      (expectedPositionKnown || legacyPositionKnown) &&
+      (!expectedPositionKnown || record.expectedPosition === 0) &&
+      (!legacyPositionKnown || record.view.position === 0);
+    return !positionIsProvablyFlat ||
+      record.nativeExitPending === true ||
+      record.nativePartial === true ||
+      record.pending !== undefined ||
+      record.view.orders.some((order) =>
+        ['submitting', 'uncertain'].includes(order.status),
+      ) ||
+      [...(record.protection?.orders ?? []), ...(record.protection?.retiring ?? [])]
+        .some((order) => ['planned', 'open', 'unknown'].includes(order.state));
   }
   foreignOrders(botId: string, snapshot: VenueSnapshot) {
     const protection = this.records[botId]?.protection;

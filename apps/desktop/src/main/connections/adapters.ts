@@ -1,19 +1,30 @@
 import { HttpTransport, InfoClient } from '@nktkas/hyperliquid';
 import { z } from 'zod';
 import type { AdapterDescriptor, TradingAccount, ExchangeActivity } from '@catbots/contracts';
+import type { ExchangeConnection, ExecutionTarget } from '@catbots/contracts';
+import type { ConnectionAuthorization } from './authorization';
+import { HyperliquidFlowVenue, type FlowVenue } from './flow-venue';
 export interface ExchangeAdapter {
  descriptor: AdapterDescriptor;
  normalizeOwner(owner:string):string;
- activity?(account:string,environment:'production'|'testnet'):Promise<ExchangeActivity>;
+ activity?(account:string,environment:'production'|'testnet',connection?: ExchangeConnection):Promise<ExchangeActivity>;
  discover(owner:string,environment:'production'|'testnet'):Promise<TradingAccount[]>;
+ verify?(connection: ExchangeConnection): Promise<boolean>;
+ createVenue?(connection: ExchangeConnection, target: ExecutionTarget): Promise<FlowVenue>;
+ connectApiKey?(input: { id: string; name: string; environment: 'production'|'testnet'; accountIndex: number; apiKeyIndex: number; apiPrivateKey: string }): Promise<ExchangeConnection>;
 }
 const address = z.string().regex(/^0x[a-fA-F0-9]{40}$/);
 const amount = z.string().refine(value => value.trim()!==''&&Number.isFinite(Number(value)),'Invalid account amount');
 const balance = z.object({marginSummary:z.object({accountValue:amount}),withdrawable:amount,assetPositions:z.array(z.object({position:z.object({szi:amount})}))});
 export class HyperliquidAdapter implements ExchangeAdapter {
- descriptor:AdapterDescriptor={id:'hyperliquid',name:'Hyperliquid',environments:['production','testnet'],authentication:['public-address','wallet'],capabilities:{accountDiscovery:true,markets:['perpetual'],trading:false}};
+ descriptor:AdapterDescriptor={id:'hyperliquid',name:'Hyperliquid',environments:['production','testnet'],authentication:['public-address','wallet'],capabilities:{accountDiscovery:true,markets:['perpetual'],trading:true,nativeProtection:true}};
  normalizeOwner(owner:string){return address.parse(owner).toLowerCase();}
- constructor(private request:typeof fetch=fetch){}
+ constructor(private request:typeof fetch=fetch, private authorization?: ConnectionAuthorization){}
+ async verify(connection: ExchangeConnection) { return !!(await this.authorization?.verify(connection, false)); }
+ async createVenue(connection: ExchangeConnection, target: ExecutionTarget) {
+  if (!this.authorization) throw new Error('Secure authorization unavailable');
+  return new HyperliquidFlowVenue(connection, target, await this.authorization.executionKey(connection));
+ }
  async activity(account:string,environment:'production'|'testnet'):Promise<ExchangeActivity> {
   const user=address.parse(account) as `0x${string}`;
   const info=new InfoClient({transport:new HttpTransport({isTestnet:environment==='testnet',timeout:10000})});

@@ -6,7 +6,7 @@ export type MarketUniverseMarket = Readonly<{
 }>;
 
 export type MarketUniverseSnapshot = Readonly<{
-  dex: 'hyperliquid';
+  dex: 'hyperliquid' | 'lighter';
   revision: string;
   observedAt: string;
   markets: readonly MarketUniverseMarket[];

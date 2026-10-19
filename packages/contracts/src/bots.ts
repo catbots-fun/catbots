@@ -6,7 +6,7 @@ export const BotStatusSchema = z.enum([
 
 export type BotStatus = z.infer<typeof BotStatusSchema>;
 
-export const DexIdSchema = z.enum(['hyperliquid']);
+export const DexIdSchema = z.enum(['hyperliquid', 'lighter']);
 
 export type DexId = z.infer<typeof DexIdSchema>;
 

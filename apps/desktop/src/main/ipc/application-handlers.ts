@@ -1,4 +1,6 @@
 import { fetchMarketSnapshot, fetchMarketCatalog } from '../nodes/market-snapshot';
+import { markets as lighterMarkets } from '../connections/lighter/accounts';
+import { LighterClient } from '../connections/lighter/client';
 import { ConnectionCommandSchema, NodePackageCommandSchema } from '@catbots/contracts';
 import { toRendererSafeTraceDetails } from '../../shared/trace-projection';
 import {
@@ -95,6 +97,11 @@ export function createApplicationHandlers(dependencies: IpcHandlerDependencies) 
   return {
     connectionCommand: async (input: unknown) => {
       const command = parseRequest(ConnectionCommandSchema, input);
+      if (command.action === 'start_flow' && !dependencies.capabilities.liveExecution) {
+        assertCapability(dependencies.capabilities.testnetExecution === true);
+        const view=await dependencies.connections?.command({action:'get_target',botId:command.botId});
+        assertCapability(view?.executionTarget?.environment === 'testnet');
+      }
       if (!dependencies.capabilities.exchangeConnections && !isExecutionRecoveryCommand(command.action)) {
         throw new IpcRequestError('EXECUTION_NOT_AVAILABLE');
       }
@@ -102,7 +109,7 @@ export function createApplicationHandlers(dependencies: IpcHandlerDependencies) 
       return dependencies.connections.command(command);
     },
     nodePackageCommand: async (input: unknown) => {
-      try { const command = NodePackageCommandSchema.parse(input); if (command.action === 'market_catalog') return { packages: [], markets: await fetchMarketCatalog() }; if (command.action === 'market_snapshot') return { packages: [], marketSnapshot: await fetchMarketSnapshot(command) }; if (!dependencies.nodePackages) throw new Error(); return dependencies.nodePackages.command(input); } catch { throw new IpcRequestError('NODE_PACKAGE_OPERATION_FAILED'); }
+      try { const command = NodePackageCommandSchema.parse(input); if (command.action === 'market_catalog') return { packages: [], markets: command.dex === 'lighter' ? (await lighterMarkets(new LighterClient(command.environment ?? 'production'))).map(item => `${item.symbol}-PERP`).sort() : await fetchMarketCatalog() }; if (command.action === 'market_snapshot') return { packages: [], marketSnapshot: await fetchMarketSnapshot(command) }; if (!dependencies.nodePackages) throw new Error(); return dependencies.nodePackages.command(input); } catch { throw new IpcRequestError('NODE_PACKAGE_OPERATION_FAILED'); }
     },
     providerCommand: async (input: unknown) => {
       try { if (!dependencies.providerService) throw new Error(); return await dependencies.providerService.command(input); }
@@ -217,6 +224,7 @@ export function createApplicationHandlers(dependencies: IpcHandlerDependencies) 
         dependencies.connections?.assertBotRemovable(request.botId);
         if (!dependencies.botRepository.remove) throw new Error('Unavailable');
         dependencies.botRepository.remove(request.botId);
+        dependencies.connections?.removeBotTarget(request.botId);
       } catch (error) {
         throw new IpcRequestError(error instanceof Error && ['BOT_ACTIVE','BOT_UNRESOLVED'].includes(error.message) ? error.message : 'BOT_DELETE_FAILED');
       }

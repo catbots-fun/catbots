@@ -5,6 +5,9 @@ import { NodePackageService } from './nodes/package-service';
 import { safeStorage, shell, Notification } from 'electron';
 import { createIncidentNotifier } from './connections/incident-notification';
 import { ProviderService } from './providers/provider-service';
+import { HyperliquidAdapter as HyperliquidConnectionAdapter } from './connections/adapters';
+import { LighterAdapter } from './connections/lighter/adapter';
+import { LighterCredentialStore } from './connections/lighter/credentials';
 import { EncryptedCredentialStore } from './providers/credential-store';
 import { app, dialog, net, session, utilityProcess, type BrowserWindow } from 'electron';
 import { startWebServer } from './web/http-server';
@@ -38,7 +41,7 @@ import { startServiceHost } from './service/service-host';
 import { createServiceIdentity, createServiceReleaseIdentity } from './service/runtime-identity';
 import { currentDataSchemaVersion } from './storage/migrations';
 import { MaintenanceCoordinator } from './maintenance/maintenance-coordinator';
-import { strategyLabCapabilities } from '../shared/product-capabilities';
+import { localAppCapabilities } from '../shared/product-capabilities';
 import { compiledReleaseCommit } from './installer/release-trust';
 
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
@@ -132,14 +135,21 @@ if (ownsApplicationInstance) void app.whenReady()
     const connection = databaseResult.database;
     const configRepository = new ConfigRepository(dataDirectory);
     const botRepository = new BotRepository(connection);
-    const nodePackages = new NodePackageService(join(dataDirectory, 'node-packages.json'));
+    const nodePackages = new NodePackageService(join(dataDirectory, 'node-packages.json'), botId => {
+      const bot=botRepository.list().find(item=>item.id===botId);
+      if(!bot)throw new Error('Backtest bot no longer exists');
+      return bot.dex;
+    });
     disposeNodeBacktests = () => nodePackages.dispose();
     const workbenchRepository = new WorkbenchRepository(connection, undefined, undefined, () => nodePackages.catalog());
     const providerService = new ProviderService(new EncryptedCredentialStore(join(dataDirectory, 'provider-auth.enc'), {
       encrypt: (value) => { if (!safeStorage.isEncryptionAvailable()) throw new Error('Secure storage unavailable'); return safeStorage.encryptString(value); },
       decrypt: (value) => safeStorage.decryptString(value),
     }), join(dataDirectory, 'provider-selection.json'), undefined, (url) => shell.openExternal(url));
-    const connections = new ConnectionsService(join(dataDirectory, 'exchange-connections.json'), undefined, new ConnectionAuthorization(join(dataDirectory, 'exchange-credentials.enc'), { encrypt: value => { if (!safeStorage.isEncryptionAvailable()) throw new Error('Secure storage unavailable'); return safeStorage.encryptString(value); }, decrypt: value => safeStorage.decryptString(value) }), async (id) => {
+    const exchangeCipher = { encrypt: (value: string) => { if (!safeStorage.isEncryptionAvailable()) throw new Error('Secure storage unavailable'); return safeStorage.encryptString(value); }, decrypt: (value: Buffer) => safeStorage.decryptString(value) };
+    const exchangeAuthorization = new ConnectionAuthorization(join(dataDirectory, 'exchange-credentials.enc'), exchangeCipher);
+    const exchangeAdapters = [new HyperliquidConnectionAdapter(fetch, exchangeAuthorization), new LighterAdapter(new LighterCredentialStore(join(dataDirectory, 'lighter-credentials.enc'), exchangeCipher), app.isPackaged ? join(process.resourcesPath, 'lighter') : join(app.getAppPath(), 'assets/lighter'))];
+    const connections = new ConnectionsService(join(dataDirectory, 'exchange-connections.json'), exchangeAdapters, exchangeAuthorization, async (id) => {
       if (!id) { if (!webServer) throw new Error('Choose a connection and click Authorize trading'); await shell.openExternal(`${webServer.origin}/#connections`); return; }
       const prepared = await connections.command({ action: 'prepare_authorization', id });
       if (!prepared.authorization) throw new Error('Authorization unavailable');
@@ -158,7 +168,7 @@ if (ownsApplicationInstance) void app.whenReady()
       });
       try { await shell.openExternal(walletBridge.origin); }
       catch (error) { await walletBridge.close(); walletBridge = undefined; throw error; }
-    }, botId => nodePackages.flowStore().get(botId));
+    }, botId => nodePackages.flowStore().get(botId), botId => botRepository.exists(botId), undefined, botId => botRepository.list().find(bot => bot.id === botId)?.dex, environment => environment === 'testnet');
     connections.startIncidentMonitoring(createIncidentNotifier(options => {
       if (!Notification.isSupported()) throw new Error('Notification unavailable');
       return new Notification(options);
@@ -188,7 +198,7 @@ if (ownsApplicationInstance) void app.whenReady()
     runtime.start();
     startupPhase = 'ipc';
     const serviceDependencies: IpcHandlerDependencies = {
-      capabilities: strategyLabCapabilities,
+      capabilities: localAppCapabilities,
       app: {
         getVersion: () => app.getVersion(),
         showMainWindow: openMainWindow,

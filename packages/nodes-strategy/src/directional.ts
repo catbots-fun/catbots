@@ -23,7 +23,6 @@ export const directionalDefinition: FlowDefinition = {
       } else {
         const held=Math.abs(state.position);
         state.entry=(held*state.entry+fill.quantity*fill.price)/(held+fill.quantity);state.position+=sign*fill.quantity;
-        if(!held)state.openedAt=context.at;
       }
       pending.filled+=fill.quantity;state.seen.push(fill.id);
       if(pending.filled>=pending.quantity-1e-8)delete state.pending;
@@ -31,7 +30,8 @@ export const directionalDefinition: FlowDefinition = {
     if(state.pending&&context.cancelledOrderIds.includes(state.pending.id))delete state.pending;
     if(state.seen.length>50000)throw new Error('Strategy fill limit exceeded');
     const orders:OrderPlan[]=[];
-    const submit=(side:'buy'|'sell',quantity:number,exit:boolean)=>{const id=JSON.stringify([scope,++state.sequence]);state.pending={id,side,quantity,filled:0,exit};orders.push({clientOrderId:id,side,quantity,reduceOnly:exit,purpose:exit?'exit':'entry'});};
+    // Bound holding time from entry intent; delayed fill recovery must not extend it.
+    const submit=(side:'buy'|'sell',quantity:number,exit:boolean)=>{const id=JSON.stringify([scope,++state.sequence]);if(!exit)state.openedAt=context.at;state.pending={id,side,quantity,filled:0,exit};orders.push({clientOrderId:id,side,quantity,reduceOnly:exit,purpose:exit?'exit':'entry'});};
     if(!Number.isFinite(context.price)||context.price<=0)throw new Error('Invalid market price');
     if(!state.pending){
       if(state.position!==0){

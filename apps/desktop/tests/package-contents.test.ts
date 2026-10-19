@@ -7,7 +7,7 @@ import {
   verifyProductionPackage,
   verifyRequiredEntries,
 } from '../../../scripts/verify-package-contents.mjs';
-import { verifyForgePackageOutputs } from '../forge.config';
+import { assertForgeMakeReady, verifyForgePackageOutputs } from '../forge.config';
 
 const temporaryDirectories: string[] = [];
 const trustPublicKey = generateKeyPairSync('rsa', { modulusLength: 3072 }).publicKey
@@ -84,6 +84,27 @@ describe('required package contents', () => {
 
     await expect(verifyProductionPackage(directory)).rejects.toThrow('Bootstrap release trust does not match');
     await expect(verifyForgePackageOutputs([directory])).rejects.toThrow('Bootstrap release trust does not match');
+  });
+
+  it('rejects --skip-package instead of allowing makers to consume a stale mismatched package', async () => {
+    const directory = await packageTree([
+      'Catbots.app/Contents/Resources/app/.vite/renderer/main_window/web.html',
+      'Catbots.app/Contents/Resources/catbots',
+      'Catbots.app/Contents/Resources/fun.catbots.web.plist.template',
+      'Catbots.app/Contents/Resources/install.sh',
+      'Catbots.app/Contents/Resources/release-trust.json',
+    ]);
+    const trustPath = join(directory, 'release-trust.json');
+    await writeFile(join(directory, 'Catbots.app/Contents/Resources/install.sh'), trustInstaller.replace('ABCDE12345', 'ZZZZZ99999'));
+    await writeFile(join(directory, 'Catbots.app/Contents/Resources/release-trust.json'), trustMetadata);
+    await writeFile(trustPath, trustMetadata);
+
+    await expect(verifyProductionPackage(directory)).rejects.toThrow('Bootstrap release trust does not match');
+    await expect(assertForgeMakeReady({
+      argv: ['node', 'electron-forge-make', '--skip-package'],
+      trustFile: trustPath,
+      expectedFingerprint: trustFingerprint,
+    })).rejects.toThrow('FORGE_SKIP_PACKAGE_FORBIDDEN');
   });
 
   it('rejects a package missing web.html', async () => {

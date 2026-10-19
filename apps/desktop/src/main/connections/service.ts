@@ -1,7 +1,6 @@
 import { FlowRunner, validateFlowTarget } from "./flow-runner";
 import { RuntimeIncidents } from './runtime-incidents';
 import type { RuntimeIncident } from '@catbots/contracts';
-import { HyperliquidFlowVenue } from "./flow-venue";
 import type { ExchangeActivity, BotExecutionOverview, ChatFlowDraft } from "@catbots/contracts";
 import {
   ExecutionTargetSchema,
@@ -14,6 +13,7 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  rmSync,
   renameSync,
   writeFileSync,
 } from "node:fs";
@@ -50,19 +50,25 @@ export class ConnectionsService {
     const cached=this.activityCache.get(key);
     if(cached && Date.now()-cached.at<15000) return cached.value;
     const adapter=this.adapters.find(item=>item.descriptor.id===connection.adapterId);
-    const value=adapter?.activity ? adapter.activity(account,connection.environment) : Promise.reject(new Error('Unavailable'));
+    const value=adapter?.activity ? adapter.activity(account,connection.environment,connection) : Promise.reject(new Error('Unavailable'));
     this.activityCache.set(key,{at:Date.now(),value});
     return value;
   }
   private starting = new Set<string>();
+  private reconciling = new Map<string, string>();
   private connections: ExchangeConnection[] = [];
   constructor(
     private path: string,
-    private adapters: ExchangeAdapter[] = [new HyperliquidAdapter()],
+    private adapters: ExchangeAdapter[] = [],
     private authorization?: ConnectionAuthorization,
     private openWalletBrowser?: (id?: string) => Promise<void>,
     private getFlow?: (botId: string) => ChatFlowDraft | undefined,
+    private botExists?: (botId: string) => boolean,
+    private persistTargets: (path: string, targets: Record<string, ExecutionTarget>) => void = persistTargetsAtomically,
+    private botDex?: (botId: string) => string | undefined,
+    private executionEnvironmentAllowed: (environment: 'production'|'testnet') => boolean = () => true,
   ) {
+    if (!this.adapters.length) this.adapters = [new HyperliquidAdapter(fetch, this.authorization)];
     this.runner = new FlowRunner(`${path}.runtime`);
     if (existsSync(path))
       this.connections = z
@@ -70,11 +76,22 @@ export class ConnectionsService {
         .max(100)
         .parse(JSON.parse(readFileSync(path, "utf8")));
   }
+  private adapter(connection: ExchangeConnection) {
+    const adapter = this.adapters.find(item => item.descriptor.id === connection.adapterId);
+    if (!adapter) throw new Error('Execution adapter unavailable');
+    return adapter;
+  }
+  private async venue(connection: ExchangeConnection, target: ExecutionTarget) {
+    const adapter = this.adapter(connection);
+    if (!adapter.createVenue) throw new Error('Execution adapter unavailable');
+    return adapter.createVenue(connection, target);
+  }
   assertBotRemovable(botId:string) {
     const run=this.runner.get(botId);
-    if(this.starting.has(botId)||this.runner.isBusy(botId)||run && ['running','stopping','interrupted'].includes(run.status)) throw new Error('BOT_ACTIVE');
+    if(this.starting.has(botId)||this.reconciling.has(botId)||this.runner.isBusy(botId)||run && ['running','stopping','interrupted'].includes(run.status)) throw new Error('BOT_ACTIVE');
     if(run?.closeResult && run.closeResult !== 'closed') throw new Error('BOT_UNRESOLVED');
     if(run?.orders.some(order=>['uncertain','submitting'].includes(order.status))) throw new Error('BOT_UNRESOLVED');
+    if(this.runner.botUnresolved(botId)) throw new Error('BOT_UNRESOLVED');
   }
   async dispose() {
     clearInterval(this.incidentTimer);this.incidentTimer=undefined;
@@ -99,6 +116,12 @@ export class ConnectionsService {
           .record(z.string().uuid(), ExecutionTargetSchema)
           .parse(JSON.parse(readFileSync(`${this.path}.targets`, "utf8")))
       : {};
+  }
+  removeBotTarget(botId: string): void {
+    const targets = this.readTargets();
+    if (!(botId in targets)) return;
+    const { [botId]: _removed, ...next } = targets;
+    this.persistTargets(`${this.path}.targets`, next);
   }
   private targetView(botId: string): ExecutionTargetView {
     const target = this.readTargets()[botId] ?? null;
@@ -131,7 +154,7 @@ export class ConnectionsService {
     if (input.action === "save_target") {
       if (
         this.starting.has(botId) ||
-        this.runner.isBusy(botId) || ["running", "stopping"].includes(this.runner.get(botId)?.status ?? "")
+        this.runner.isBusy(botId) || this.runner.botUnresolved(botId) || ["running", "stopping", "interrupted"].includes(this.runner.get(botId)?.status ?? "")
       )
         throw new Error("Stop the bot before changing its target");
       const connection = this.connections.find(
@@ -139,15 +162,12 @@ export class ConnectionsService {
       );
       if (
         !connection ||
+        (this.botDex && this.botDex(botId) !== connection.adapterId) ||
         !connection.accounts.some((item) => item.id === input.target.accountId)
       )
         throw new Error("Select an account belonging to this connection");
       const next = { ...this.readTargets(), [botId]: input.target };
-      mkdirSync(dirname(this.path), { recursive: true });
-      writeFileSync(`${this.path}.targets.tmp`, JSON.stringify(next), {
-        mode: 0o600,
-      });
-      renameSync(`${this.path}.targets.tmp`, `${this.path}.targets`);
+      this.persistTargets(`${this.path}.targets`, next);
     }
     const view = this.targetView(botId);
     if (input.action === "check_target") {
@@ -158,7 +178,7 @@ export class ConnectionsService {
       let freshAccount = false;
       if (connection) {
         try {
-          authorized = !!(await this.authorization?.verify(connection, false));
+          authorized = !!(await this.adapter(connection).verify?.(connection));
         } catch {}
         try {
           const adapter = this.adapters.find(
@@ -181,6 +201,7 @@ export class ConnectionsService {
           throw new Error("Validate the current workflow first");
         if (!view.target) throw new Error("Save an execution target first");
         validateFlowTarget(draft.document, view.target, connection?.environment);
+        if (connection && draft.document.nodes.some(node => node.type === 'strategy.dca') && !this.adapter(connection).descriptor.capabilities.nativeProtection) throw new Error('This workflow requires exchange-native protection unavailable on this adapter');
         runtime = true;
         runtimeDetail = draft.document.nodes.some(node => node.type === "strategy.directional") ? "Testnet Long/Short · Exits checked at each evaluation while app is open; no exchange-native stop" : "Market IOC · Native exchange TP/SL for DCA";
       } catch (error) {
@@ -195,16 +216,10 @@ export class ConnectionsService {
         freshAccount &&
         runtime &&
         connection &&
-        view.target &&
-        this.authorization
+        view.target
       ) {
         try {
-          const key = await this.authorization.executionKey(connection);
-          const snapshot = await new HyperliquidFlowVenue(
-            connection,
-            view.target,
-            key,
-          ).snapshot([]);
+          const snapshot = await (await this.venue(connection, view.target)).snapshot([]);
           if (this.runner.foreignOrders(botId, snapshot))
             throw new Error("Resolve unrelated open orders first");
           if (snapshot.available <= 0)
@@ -254,14 +269,23 @@ export class ConnectionsService {
   }
   async command(raw: unknown): Promise<ConnectionsView> {
     const input = ConnectionCommandSchema.parse(raw);
+    if (input.action === 'connect_api_key') {
+      if (this.connections.length >= 100) throw new Error('Connection limit reached');
+      const adapter = this.adapters.find(item => item.descriptor.id === input.adapterId);
+      if (!adapter?.connectApiKey) throw new Error('API key connection unavailable');
+      if (this.connections.some(item => item.adapterId === input.adapterId && item.environment === input.environment && item.owner === String(input.accountIndex))) throw new Error('This account is already connected');
+      const connected = await adapter.connectApiKey({ ...input, id: randomUUID() });
+      if (this.connections.some(item => item.adapterId === input.adapterId && item.environment === input.environment && item.owner === String(input.accountIndex))) throw new Error('This account is already connected');
+      this.save([...this.connections, connected]);
+      return this.view();
+    }
     if (input.action === 'close_flow_position') {
       const deployment = this.runner.get(input.botId);
       if (!deployment || deployment.id !== input.deploymentId || !deployment.closePositionSupported) throw new Error('Supported deployment unavailable');
       if (input.confirmation !== `CLOSE ${deployment.target.market}`) throw new Error('Exact market confirmation required');
       const connection = this.connections.find(item => item.id === deployment.target.connectionId);
-      if (!connection || !this.authorization) throw new Error('Saved connection unavailable');
-      const key = await this.authorization.executionKey(connection);
-      return { ...this.view(), deployment: await this.runner.closePosition(input.botId, input.deploymentId, input.confirmation, new HyperliquidFlowVenue(connection, deployment.target, key)) };
+      if (!connection) throw new Error('Saved connection unavailable');
+      return { ...this.view(), deployment: await this.runner.closePosition(input.botId, input.deploymentId, input.confirmation, await this.venue(connection, deployment.target)) };
     }
     if (input.action === 'set_flow_entries_paused') return { ...this.view(), deployment: this.runner.setEntriesPaused(input.botId, input.deploymentId, input.paused) };
     if (input.action === 'get_flow_audit_summary') return { ...this.view(), auditSummary: this.runner.auditSummary(input.botId) };
@@ -304,20 +328,28 @@ export class ConnectionsService {
         incidentWarning: this.incidentWarning,
       };
     if (input.action === "reconcile_flow") {
+      if (this.reconciling.has(input.botId))
+        throw new Error("Reconciliation already in progress");
       const deployment = this.runner.get(input.botId);
       const connection = this.connections.find(
         (item) => item.id === deployment?.target.connectionId,
       );
-      if (!deployment || !connection || !this.authorization)
+      if (!deployment || !connection)
         throw new Error("Saved deployment unavailable");
-      const key = await this.authorization.executionKey(connection);
-      return {
-        ...this.view(),
-        deployment: await this.runner.reconcile(
-          input.botId,
-          new HyperliquidFlowVenue(connection, deployment.target, key),
-        ),
-      };
+      if (this.botExists && !this.botExists(input.botId))
+        throw new Error("Bot no longer exists. Reload the bot list.");
+      this.reconciling.set(input.botId, connection.id);
+      try {
+        return {
+          ...this.view(),
+          deployment: await this.runner.reconcile(
+            input.botId,
+            await this.venue(connection, deployment.target),
+          ),
+        };
+      } finally {
+        this.reconciling.delete(input.botId);
+      }
     }
     if (input.action === "stop_flow")
       return {
@@ -329,6 +361,8 @@ export class ConnectionsService {
         throw new Error("Bot is already starting");
       this.starting.add(input.botId);
       try {
+        if (this.botExists && !this.botExists(input.botId))
+          throw new Error("Bot no longer exists. Reload the bot list.");
         const target = this.readTargets()[input.botId];
         const connection = this.connections.find(
           (item) => item.id === target?.connectionId,
@@ -337,17 +371,18 @@ export class ConnectionsService {
         if (
           !target ||
           !connection ||
+          (this.botDex && this.botDex(input.botId) !== connection.adapterId) ||
           !draft ||
           draft.status !== "valid" ||
           draft.version !== input.version ||
           !connection.accounts.some((item) => item.id === target.accountId)
         )
           throw new Error("Reload and validate the workflow and target");
+        if (!this.executionEnvironmentAllowed(connection.environment)) throw new Error('EXECUTION_NOT_AVAILABLE');
         if (input.confirmation !== `${connection.environment}:${target.market}`)
           throw new Error("Network and market confirmation required");
-        if (connection.adapterId !== "hyperliquid" || !this.authorization)
-          throw new Error("Execution adapter unavailable");
-        const key = await this.authorization.executionKey(connection);
+        const venue = await this.venue(connection, target);
+        if (draft.document.nodes.some(node => node.type === 'strategy.dca') && !venue.protection) throw new Error('This workflow requires exchange-native protection unavailable on this adapter');
         return {
           ...this.view(),
           deployment: await this.runner.start(
@@ -356,7 +391,7 @@ export class ConnectionsService {
             draft.document,
             target,
             connection.environment,
-            new HyperliquidFlowVenue(connection, target, key),
+            venue,
           ),
         };
       } finally {
@@ -386,8 +421,14 @@ export class ConnectionsService {
           "Stop bots on this connection before changing or checking authorization",
         );
       const connection = this.connections.find((item) => item.id === input.id);
-      if (!connection || !this.authorization)
+      if (!connection)
         throw new Error("Secure authorization unavailable");
+      if (input.action === 'verify_authorization') {
+        const valid = !!(await this.adapter(connection).verify?.(connection));
+        this.save(this.connections.map(item => item.id === connection.id ? { ...item, permission: valid ? 'trading-authorized' : 'view-only', authorizationCheckedAt: new Date().toISOString() } : item));
+        return this.view();
+      }
+      if (!this.authorization) throw new Error('Secure authorization unavailable');
       if (input.action === "prepare_authorization")
         return {
           ...this.view(),
@@ -416,14 +457,99 @@ export class ConnectionsService {
       return this.view();
     }
     if (input.action === "remove") {
-      if (
-        Object.values(this.readTargets()).some(
-          (target) => target.connectionId === input.id,
-        )
-      )
+      const targets = this.readTargets();
+      const selected = Object.entries(targets).filter(
+        ([, target]) => target.connectionId === input.id,
+      );
+      const unresolved = this.runner.connectionUnresolvedTargets(input.id);
+      const locallyUnsafe = () =>
+        this.runner.connectionActive(input.id) ||
+        [...this.reconciling.values()].includes(input.id) ||
+        selected.some(([botId]) => this.starting.has(botId)) ||
+        unresolved.some((target) => this.starting.has(target.botId));
+      if (locallyUnsafe())
+        throw new Error(
+          "This connection has an active or unresolved deployment. Stop and reconcile it before removing the connection.",
+        );
+      if (selected.some(([botId]) => this.botExists?.(botId) ?? true))
         throw new Error(
           "This connection is selected by a bot. Change its execution target before removing it.",
         );
+      if (unresolved.some((target) => this.botExists?.(target.botId) ?? true))
+        throw new Error(
+          "This connection has an active or unresolved deployment. Stop and reconcile it before removing the connection.",
+        );
+      if (unresolved.length > 0) {
+        const connection = this.connections.find((item) => item.id === input.id);
+        const adapter = this.adapters.find(
+          (item) => item.descriptor.id === connection?.adapterId,
+        );
+        if (!connection || !adapter?.activity)
+          throw new Error(
+            "This connection has an active or unresolved deployment. Stop and reconcile it before removing the connection.",
+          );
+        const checks = new Map<string, Promise<ExchangeActivity>>();
+        try {
+          for (const target of unresolved) {
+            const account = connection.accounts.find(
+              (item) => item.id.toLowerCase() === target.accountId.toLowerCase(),
+            );
+            if (!account) throw new Error("Account unavailable");
+            const key = account.id.toLowerCase();
+            if (!checks.has(key))
+              checks.set(
+                key,
+                adapter.activity(account.address, connection.environment, connection),
+              );
+          }
+          const activity = await Promise.all(checks.values());
+          if (
+            activity.some(
+              (snapshot) =>
+                !Array.isArray(snapshot.positions) ||
+                !Array.isArray(snapshot.orders) ||
+                snapshot.positions.length > 0 ||
+                snapshot.orders.length > 0,
+            )
+          )
+            throw new Error("Account is not flat");
+        } catch {
+          throw new Error(
+            "This connection has an active or unresolved deployment. Stop and reconcile it before removing the connection.",
+          );
+        }
+        const latestTargets = this.readTargets();
+        const latestSelected = Object.entries(latestTargets).filter(
+          ([, target]) => target.connectionId === input.id,
+        );
+        if (latestSelected.some(([botId]) => this.botExists?.(botId) ?? true))
+          throw new Error(
+            "This connection is selected by a bot. Change its execution target before removing it.",
+          );
+        const latestUnresolved = this.runner.connectionUnresolvedTargets(input.id);
+        if (
+          locallyUnsafe() ||
+          latestSelected.some(([botId]) => this.starting.has(botId)) ||
+          latestUnresolved.some((target) => this.starting.has(target.botId)) ||
+          JSON.stringify(latestTargets) !== JSON.stringify(targets) ||
+          JSON.stringify(latestUnresolved) !== JSON.stringify(unresolved) ||
+          selected.some(([botId]) => this.botExists?.(botId) ?? true) ||
+          unresolved.some((target) => this.botExists?.(target.botId) ?? true)
+        )
+          throw new Error(
+            "This connection has an active or unresolved deployment. Stop and reconcile it before removing the connection.",
+          );
+      }
+      this.runner.removeTerminalRecords(unresolved.map((target) => target.botId));
+      if (selected.length > 0) {
+        const orphanIds = new Set(selected.map(([botId]) => botId));
+        this.persistTargets(
+          `${this.path}.targets`,
+          Object.fromEntries(
+            Object.entries(targets).filter(([botId]) => !orphanIds.has(botId)),
+          ),
+        );
+      }
       this.save(this.connections.filter((item) => item.id !== input.id));
       return this.view();
     }
@@ -459,6 +585,7 @@ export class ConnectionsService {
       name: source.name,
       environment: source.environment,
       owner,
+      ...(existing?.apiKeyIndex === undefined ? {} : { apiKeyIndex: existing.apiKeyIndex }),
       permission: existing?.permission ?? duplicate?.permission ?? "view-only",
       authorizationCheckedAt:
         existing?.authorizationCheckedAt ?? duplicate?.authorizationCheckedAt,
@@ -469,5 +596,23 @@ export class ConnectionsService {
     if (next.length >= 100) throw new Error("Connection limit reached");
     this.save([...next, connection]);
     return this.view();
+  }
+}
+
+function persistTargetsAtomically(
+  path: string,
+  targets: Record<string, ExecutionTarget>,
+): void {
+  mkdirSync(dirname(path), { recursive: true });
+  const temporary = `${path}.${randomUUID()}.tmp`;
+  try {
+    writeFileSync(temporary, JSON.stringify(targets), {
+      flag: "wx",
+      mode: 0o600,
+    });
+    renameSync(temporary, path);
+  } catch (error) {
+    rmSync(temporary, { force: true });
+    throw error;
   }
 }

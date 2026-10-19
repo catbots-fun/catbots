@@ -9,7 +9,7 @@ type CreateDraftBotDialogProps = {
   onCreated(bot: BotSummary): void;
 };
 
-type DraftForm = { name: string; dex: 'hyperliquid' };
+type DraftForm = { name: string; dex: 'hyperliquid' | 'lighter' };
 type DraftErrors = Partial<Record<'name', string>>;
 
 function validate(form: DraftForm): DraftErrors {
@@ -94,10 +94,11 @@ export function CreateDraftBotDialog({ api, open, onOpenChange, onCreated }: Cre
             label="DEX"
             value={form.dex}
             onValueChange={(dex) => { if (dex !== null) updateForm('dex', dex); }}
-            renderValue={() => 'Hyperliquid'}
+            renderValue={() => form.dex === 'lighter' ? 'Lighter' : 'Hyperliquid'}
             disabled={isCreating}
           >
             <Select.Option value="hyperliquid">Hyperliquid</Select.Option>
+            <Select.Option value="lighter">Lighter</Select.Option>
           </Select>
           {error ? <Banner variant="error" role="alert" title="Draft not created" description="We could not create this draft. Review the local values and try again." /> : null}
           <div className="draft-form-actions">

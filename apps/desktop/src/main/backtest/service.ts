@@ -9,8 +9,8 @@ type Execute = (document:FlowDocument,settings:FlowBacktestSettings,data:Histori
 export class FlowBacktestService {
   private jobs=new Map<string,{view:FlowBacktestJob;controller:AbortController;key:string}>();
   private cache:BacktestCache;
-  private loader:HistoricalFlowLoader;
-  constructor(directory:string,private getDraft:(botId:string)=>ChatFlowDraft|undefined,private execute:Execute=runWorker,request:typeof fetch=fetch){this.cache=new BacktestCache(join(directory,'results'));this.loader=new HistoricalFlowLoader(new BacktestCache(join(directory,'data')),request);}
+  private loaders:Record<'hyperliquid'|'lighter',HistoricalFlowLoader>;
+  constructor(directory:string,private getDraft:(botId:string)=>ChatFlowDraft|undefined,private execute:Execute=runWorker,request:typeof fetch=fetch,private getDex:(botId:string)=>'hyperliquid'|'lighter'=()=> 'hyperliquid'){this.cache=new BacktestCache(join(directory,'results'));const cache=new BacktestCache(join(directory,'data'));this.loaders={hyperliquid:new HistoricalFlowLoader(cache,request),lighter:new HistoricalFlowLoader(cache,request,'lighter')};}
   command(input:unknown):FlowBacktestJob {
     const command=FlowBacktestCommandSchema.parse(input);
     if(command.action!=='backtest_flow'){
@@ -33,7 +33,7 @@ export class FlowBacktestService {
   private async run(job:{view:FlowBacktestJob;controller:AbortController},document:FlowDocument,settings:FlowBacktestSettings,refresh:boolean){
     flowHistoryRequirements(document,settings);
     const signal=job.controller.signal;
-    const data=await this.loader.load(document,settings,signal,refresh);signal.throwIfAborted();
+    const data=await this.loaders[this.getDex(job.view.botId)].load(document,settings,signal,refresh);signal.throwIfAborted();
     const dataHash=hash({source:data.source,candles:data.candles,funding:data.funding}),flowHash=hash(document);
     const resultKey=hash({engine:FLOW_BACKTEST_ENGINE,packages:runtimeNodePackages.map(pkg=>({name:pkg.name,version:pkg.version,nodes:pkg.definitions.map(node=>[node.type,node.version])})),dataHash,flowHash,settings});
     const cached=refresh?undefined:await this.cache.get<FlowBacktestResult>(resultKey,24*3600000);signal.throwIfAborted();

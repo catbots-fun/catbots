@@ -58,6 +58,12 @@ export class BotRepository {
     })();
   }
 
+  exists(botId: string): boolean {
+    return this.database.prepare(
+      'SELECT 1 FROM bots WHERE id = ? AND deleted_at IS NULL',
+    ).get(botId) !== undefined;
+  }
+
   list(): BotSummary[] {
     const rows = this.database.prepare(`
       SELECT id, name, dex, status, created_at, updated_at

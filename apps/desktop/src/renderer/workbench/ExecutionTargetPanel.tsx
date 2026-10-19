@@ -20,6 +20,7 @@ import type {
 } from "@catbots/contracts";
 export function ExecutionTargetPanel({
   botId,
+  dex = 'hyperliquid',
   directional = false,
   nodeApi,
   workspaceMarket = "ETH-PERP",
@@ -27,6 +28,7 @@ export function ExecutionTargetPanel({
   api,
 }: {
   botId: string;
+  dex?: 'hyperliquid'|'lighter';
   directional?: boolean;
   nodeApi?: CatbotsDesktopApi['nodes'];
   workspaceMarket?: string;
@@ -147,9 +149,11 @@ export function ExecutionTargetPanel({
       );
       setDeployment(next.deployment);
       setConfirmation("");
-    } catch {
+    } catch (error) {
       setError(
-        "Runtime could not start or stop. Check readiness, market minimum ($10), available funds and open orders. Inspect the exchange if a previous order was unresolved.",
+        error instanceof Error && error.message.includes('EXECUTION_NOT_AVAILABLE')
+          ? 'Execution is not enabled for this network. This local release supports Testnet only; Mainnet trading remains disabled.'
+          : "Runtime could not start or stop. Check readiness, market minimum ($10), available funds and open orders. Inspect the exchange if a previous order was unresolved.",
       );
     } finally {
       setBusy(false);
@@ -339,7 +343,7 @@ export function ExecutionTargetPanel({
               })
             }
           >
-            {data.connections.map((item) => (
+            {data.connections.filter(item => item.adapterId === dex).map((item) => (
               <Select.Option key={item.id} value={item.id}>
                 {item.name} ·{" "}
                 {item.environment === "production" ? "Mainnet" : "Testnet"}
@@ -366,7 +370,7 @@ export function ExecutionTargetPanel({
               </Select.Option>
             ))}
           </Select>
-          <MarketPicker api={nodeApi} label="Trading market" value={target.market} disabled={busy || running} onChange={market => { setTarget({ ...target, market }); setConfirmation(''); }} />
+          <MarketPicker api={nodeApi} dex={dex} environment={data.connections.find(item => item.id === target.connectionId)?.environment} label="Trading market" value={target.market} disabled={busy || running} onChange={market => { setTarget({ ...target, market }); setConfirmation(''); }} />
           <Input
             size="base"
             label="Maximum position (USD)"

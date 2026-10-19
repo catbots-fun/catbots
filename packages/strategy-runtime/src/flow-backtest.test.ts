@@ -9,6 +9,13 @@ const e=(source:string,target:string,sourcePort='main',targetPort='main')=>({sou
 const flow:FlowDocument={schemaVersion:'3.0',nodes:[n('price','data.price'),n('items','process.number_to_items',{field:'price'}),n('if','condition.if_items',{field:'price',operator:'lt',valueJson:'105'}),n('size','process.edit_fields',{field:'quantity',valueJson:'1'}),n('exitSize','process.edit_fields',{field:'quantity',valueJson:'1'}),n('buy','action.item_order',{side:'buy'}),n('sell','action.item_order',{side:'sell',reduceOnly:true})],edges:[e('price','items','value','value'),e('items','if'),e('if','size','true'),e('size','buy'),e('if','exitSize','false'),e('exitSize','sell')]};
 function dataset():HistoricalFlowData { return {source:'test-fixture',fetchedAt:new Date(4*hour).toISOString(),funding:[0,hour,2*hour].map(at=>({at,rate:0.001})),candles:{'1h':[-2,-1,0,1,2].map((index)=>{const open=index<1?100:index===1?110:130,close=index<1?100:index===1?120:130;return {closedAt:(index+1)*hour-1,open,close,high:Math.max(open,close),low:Math.min(open,close),volume:1000};})}}; }
 describe('historical packaged flow replay',()=>{
+  it('replays a complete seven-day 1m dataset without the exchange-specific 5000-bar cap',()=>{
+    const minute=60000,end=10080*minute;
+    const data:HistoricalFlowData={source:'Lighter fixture',fetchedAt:new Date(end).toISOString(),candles:{'1m':Array.from({length:10082},(_,i)=>({closedAt:(i-1)*minute-1,open:100,high:100,low:100,close:100,volume:1}))},funding:Array.from({length:168},(_,i)=>({at:i*hour,rate:0}))};
+    const result=replayFlowBacktest({schemaVersion:'3.0',nodes:[n('price','data.price')],edges:[]},{...settings,timeframe:'1m',to:new Date(end).toISOString()},data);
+    expect(result.dataset.bars).toBe(10080);
+    expect(result.finalEquity).toBe(1000);
+  });
   it('fills next-bar opens, includes fees and funding, and reconciles cash exactly',()=>{
     const result=replayFlowBacktest(flow,settings,dataset());
     expect(result.fills.map(fill=>[fill.at,fill.price,fill.side])).toEqual([[hour,110,'buy'],[2*hour,130,'sell']]);
