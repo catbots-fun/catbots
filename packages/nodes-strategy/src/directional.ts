@@ -1,11 +1,12 @@
 import { z } from 'zod';
-import { ready, type FlowDefinition, type OrderPlan } from '@catbots/node-kit';
+import { ready, unavailable, type FlowDefinition, type OrderPlan } from '@catbots/node-kit';
 const pendingSchema = z.object({ id: z.string(), side: z.enum(['buy','sell']), quantity: z.number().positive(), filled: z.number().nonnegative(), exit: z.boolean() });
 const stateSchema = z.object({ scope:z.string(), key:z.string(), position:z.number().finite(), entry:z.number().nonnegative(), openedAt:z.number(), atr:z.number().nonnegative(), cooldownUntil:z.number(), sequence:z.number().int(), seen:z.array(z.string()), pending:pendingSchema.optional() });
+const directionalConfig = z.object({quotePerOrder:z.number().positive(),rsiThreshold:z.number().min(50).max(75).default(55),stopAtr:z.number().positive().default(1.5),rewardRisk:z.number().positive().default(2),minAtrPercent:z.number().nonnegative().default(0.1),maxHoldMinutes:z.number().int().positive().default(30),cooldownMinutes:z.number().int().nonnegative().default(5)}).strict();
 /** One controller owns both directions. Confirmed fills alone change position. */
 export const directionalDefinition: FlowDefinition = {
   type:'strategy.directional', version:1, category:'strategy', title:'Long / Short momentum',
-  config:z.object({quotePerOrder:z.number().positive(),rsiThreshold:z.number().min(50).max(75).default(55),stopAtr:z.number().positive().default(1.5),rewardRisk:z.number().positive().default(2),minAtrPercent:z.number().nonnegative().default(0.1),maxHoldMinutes:z.number().int().positive().default(30),cooldownMinutes:z.number().int().nonnegative().default(5)}).strict(),
+  config:directionalConfig,
   inputs:{fast:'number',slow:'number',rsi:'number',atr:'number'},outputs:{orders:'orders',status:'json'},
   evaluate(input,config,context,previous,nodeId) {
     const scope=JSON.stringify([context.deploymentId,context.market,nodeId]);
@@ -46,5 +47,37 @@ export const directionalDefinition: FlowDefinition = {
       }
     }
     return {state,orders,outputs:{orders:ready('orders',orders),status:ready('json',{position:state.position,entry:state.entry,pending:!!state.pending,cooldownUntil:state.cooldownUntil})}};
+  },
+};
+
+const signalState = z.object({ scope: z.string(), key: z.string(), armed: z.boolean(), controller: stateSchema.optional() }).strict();
+
+/** Entry decisions come from the graph; confirmed-fill position management is
+ * shared with v1. Versions are separate so saved v1 bots never change behavior. */
+export const composableDirectionalDefinition: FlowDefinition = {
+  type: 'strategy.directional', version: 2, category: 'strategy', title: 'Long / Short · Custom signals',
+  config: directionalConfig.omit({ rsiThreshold: true }),
+  inputs: { long: 'condition', short: 'condition', atr: 'number' }, outputs: { orders: 'orders', status: 'json' },
+  evaluate(input, config, context, previous, nodeId) {
+    const scope = JSON.stringify([context.deploymentId, context.market, nodeId]);
+    const key = JSON.stringify(config);
+    const state = previous === undefined ? { scope, key, armed: true, controller: undefined } : signalState.parse(previous);
+    if (state.scope !== scope || state.key !== key) throw new Error('Strategy context changed');
+    const valid = [input.long, input.short].every(value => value?.quality === 'ready' && typeof value.value === 'boolean');
+    const signalEvaluation = context.evaluationMode !== 'risk';
+    if (signalEvaluation && valid && input.long.value === false && input.short.value === false) state.armed = true;
+    const exclusive = valid && input.long.value !== input.short.value;
+    const canEnter = signalEvaluation && state.armed && exclusive;
+    const long = canEnter && input.long.value === true;
+    const blocked = unavailable('number', 'Entry signals unavailable, conflicting, or consumed');
+    const result = directionalDefinition.evaluate({
+      fast: canEnter ? ready('number', long ? 1 : -1) : blocked,
+      slow: canEnter ? ready('number', 0) : blocked,
+      rsi: canEnter ? ready('number', long ? 100 : 0) : blocked,
+      atr: input.atr ?? unavailable('number', 'ATR unavailable'),
+    }, { ...config, rsiThreshold: 55 }, context, state.controller, nodeId);
+    if (result.orders?.some(order => order.purpose === 'entry')) state.armed = false;
+    state.controller = stateSchema.parse(result.state);
+    return { ...result, state, outputs: { ...result.outputs, status: ready('json', { ...result.outputs.status.value as Record<string, unknown>, signalArmed: state.armed }) } };
   },
 };

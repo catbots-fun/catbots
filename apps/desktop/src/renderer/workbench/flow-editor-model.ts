@@ -1,6 +1,9 @@
 import { z } from 'zod';
 import { createAllCategoryExample, runtimeNodePackages, type FlowDocument, type FlowEdge } from '@catbots/strategy-runtime/node-examples';
-export const editorDefinitions = new Map(runtimeNodePackages.flatMap(pkg => pkg.definitions.map(def => [def.type, { ...def, packageName: pkg.name }] as const)));
+export const editorDefinitions = new Map(runtimeNodePackages.flatMap(pkg => pkg.definitions.map(def => [`${def.type}@${def.version}`, { ...def, packageName: pkg.name }] as const)));
+export function editorDefinition(node: { type: string; version: number } | undefined) {
+  return node ? editorDefinitions.get(`${node.type}@${node.version}`) : undefined;
+}
 export function starterFlow(): FlowDocument {
   const doc = createAllCategoryExample();
   doc.nodes = doc.nodes.filter(node => node.id !== 'strategy');
@@ -18,8 +21,8 @@ export function starterFlow(): FlowDocument {
 export function connectionError(doc: FlowDocument, edge: FlowEdge): string | null {
   const source = doc.nodes.find(node => node.id === edge.source);
   const target = doc.nodes.find(node => node.id === edge.target);
-  const from = source && editorDefinitions.get(source.type)?.outputs[edge.sourcePort];
-  const to = target && editorDefinitions.get(target.type)?.inputs[edge.targetPort];
+  const from = editorDefinition(source)?.outputs[edge.sourcePort];
+  const to = editorDefinition(target)?.inputs[edge.targetPort];
   if (!from || !to || from !== to) return 'Connect matching port types. Flow and Data cannot be mixed.';
   if (doc.edges.some(item => item.target === edge.target && item.targetPort === edge.targetPort)) return 'This input already has a connection. Remove it first.';
   const reachable = new Set([edge.target]);
@@ -30,15 +33,15 @@ export function connectionError(doc: FlowDocument, edge: FlowEdge): string | nul
 const draftSchema = z.object({ schemaVersion: z.literal('3.0'), nodes: z.array(z.object({ id: z.string().min(1), type: z.string(), version: z.number().int(), config: z.record(z.string(), z.unknown()) })).max(200), edges: z.array(z.object({ source: z.string(), target: z.string(), sourcePort: z.string(), targetPort: z.string() })).max(1000) });
 export function parseDraft(value: unknown): FlowDocument {
   const doc = draftSchema.parse(value);
-  if (new Set(doc.nodes.map(node => node.id)).size !== doc.nodes.length || doc.nodes.some(node => editorDefinitions.get(node.type)?.version !== node.version)) throw new Error('Unknown or duplicate node');
+  if (new Set(doc.nodes.map(node => node.id)).size !== doc.nodes.length || doc.nodes.some(node => !editorDefinition(node))) throw new Error('Unknown or duplicate node');
   const checked = { ...doc, edges: [] as FlowEdge[] };
   for (const edge of doc.edges) { const issue = connectionError(checked, edge); if (issue) throw new Error(issue); checked.edges.push(edge); }
   return doc;
 }
-export function configFields(type: string) {
-  return z.toJSONSchema(editorDefinitions.get(type)!.config) as { properties?: Record<string, { type?: string; enum?: string[]; default?: unknown; minimum?: number; maximum?: number }> };
+export function configFields(type: string, version = 1) {
+  return z.toJSONSchema(editorDefinition({ type, version })!.config) as { properties?: Record<string, { type?: string; enum?: string[]; default?: unknown; minimum?: number; maximum?: number }> };
 }
-export function defaultConfig(type: string): Record<string, unknown> {
+export function defaultConfig(type: string, version = 1): Record<string, unknown> {
   const presets: Record<string, Record<string, unknown>> = {
     'process.edit_fields': { field: 'signal', valueJson: 'true' }, 'process.split_out': { field: 'value' }, 'condition.if_items': { field: 'value', operator: 'lt', valueJson: '30' },
     'data.candle_items': { timeframe: '5m' }, 'action.item_order': { quantityField: 'quantity', side: 'buy', reduceOnly: false }, 'data.candles': { timeframe: '5m' }, 'process.number': { value: 30 }, 'process.math': { operator: 'add' },
@@ -52,7 +55,7 @@ export function defaultConfig(type: string): Record<string, unknown> {
     'strategy.grid': { quotePerOrder: 100, takeProfitPercent: 2, stopLossPercent: 10, maxNotional: 500, levels: 3, stepPercent: 5 },
     'strategy.smart_order': { quantity: 2, sliceQuantity: 1, maxNotional: 500 },
   };
-  return editorDefinitions.get(type)!.config.parse(presets[type] ?? (type.startsWith('indicator.') ? { period: 14 } : {})) as Record<string, unknown>;
+  return editorDefinition({ type, version })!.config.parse(presets[type] ?? (type.startsWith('indicator.') ? { period: 14 } : {})) as Record<string, unknown>;
 }
 
 /** Native item flow: closed market data stays on the same item all the way to a proposal. */

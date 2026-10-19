@@ -136,6 +136,14 @@ const conditionNodes = definePackage('@catbots/nodes-condition', [{
 }]);
 
 export const conditionPackage = definePackage('@catbots/nodes-condition', [...conditionNodes.definitions, {
+  type: 'condition.not', version: 1, category: 'condition', title: 'NOT',
+  config: z.object({}).strict(), inputs: { condition: 'condition' }, outputs: { result: 'condition' },
+  evaluate(input) {
+    const value = input.condition;
+    return { outputs: { result: value?.quality === 'ready' && typeof value.value === 'boolean'
+      ? ready('condition', !value.value) : unavailable('condition', value?.reason ?? 'Condition unavailable') } };
+  },
+}, {
   type: 'condition.branch', version: 1, category: 'condition', title: 'Branch', activation: 'flow',
   config: z.object({}).strict(), inputs: { flow: 'flow', condition: 'condition' }, outputs: { true: 'flow', false: 'flow' },
   evaluate(input) {

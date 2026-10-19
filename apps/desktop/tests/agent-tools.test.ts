@@ -54,6 +54,13 @@ beforeEach(() => {
 afterEach(() => database.close());
 
 describe('Agent tool catalog', () => {
+  it('exposes custom-signal controller ports and NOT to the flow-building agent', () => {
+    const result = createCatalog().execute('get_flow', {});
+    expect(result.definitions).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'strategy.directional', version: 2, inputs: { long: 'condition', short: 'condition', atr: 'number' } }),
+      expect.objectContaining({ type: 'condition.not', inputs: { condition: 'condition' } }),
+    ]));
+  });
   it('exposes the approved legacy and packaged flow tools with strict object schemas', () => {
     const catalog = createCatalog();
 

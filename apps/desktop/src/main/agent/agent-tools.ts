@@ -178,7 +178,7 @@ export function createAgentToolCatalog(dependencies: AgentToolDependencies): Age
           noArguments.parse(argumentsValue);
           return { ok: true, flow: dependencies.flowStore?.get(dependencies.botId) ?? null,
             definitions: runtimeNodePackages.flatMap(pkg => pkg.definitions.map(def => ({ type: def.type, version: def.version, category: def.category, title: def.title, configSchema: jsonSchemaFor(def.config), inputs: def.inputs, outputs: def.outputs, activation: def.activation ?? null }))),
-            notice: 'Packaged flow is simulation-only. Solid Flow ports control activation. Data ports carry typed snapshot values. Preserve existing nodes when editing. Not connected to Paper/Live approval.' } as unknown as AgentToolResult;
+            notice: 'Validation is for simulation, not deployment approval. Selected workflows support user-controlled Testnet execution only after Deploy readiness checks; never infer Paper/Mainnet support. Solid Flow ports control activation. Data ports carry typed snapshot values. Preserve existing nodes and pinned versions when editing.' } as unknown as AgentToolResult;
         }
         if (name === 'edit_flow' || name === 'validate_flow') {
           if (!dependencies.flowStore) return failure('FLOW_STORE_UNAVAILABLE', 'Flow storage unavailable.');
@@ -201,7 +201,7 @@ export function createAgentToolCatalog(dependencies: AgentToolDependencies): Age
         }
         if (name === 'list_nodes') {
           noArguments.parse(argumentsValue);
-          return { ok: true, simulationPackages: listRuntimePackages(), simulationNotice: 'Runtime v3 packages are simulation-only in Nodes. Only nodes in the nodes array may be used with validate_strategy or deployed.', nodes: registry.list().map((node) => ({
+          return { ok: true, simulationPackages: listRuntimePackages(), simulationNotice: 'Runtime v3 packages are for packaged flows via get_flow/edit_flow. Graph validation does not approve deployment; selected workflows require separate Deploy readiness checks. The nodes array below is the legacy schema used by validate_strategy, not the packaged-flow catalog.', nodes: registry.list().map((node) => ({
             kind: node.kind,
             type: node.type,
             version: node.version,

@@ -1022,7 +1022,7 @@ export class FlowRunner {
     for (const node of record.document.nodes.filter(hasRiskEvaluation)) {
       const definition = runtimeNodePackages
         .flatMap((pkg) => pkg.definitions)
-        .find((def) => def.type === node.type)!;
+        .find((def) => def.type === node.type && def.version === node.version)!;
       const input: Parameters<typeof definition.evaluate>[0] = node.type === 'strategy.dca' ? {
         signal: {
           type: "condition" as const,

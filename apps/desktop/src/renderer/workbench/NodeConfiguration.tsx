@@ -4,7 +4,7 @@ import { useState, type ReactNode } from 'react';
 import { Badge, Banner, Button, Input, Select, Switch, Tabs } from '@cloudflare/kumo';
 import type { CatbotsDesktopApi, ChatFlowDraft } from '@catbots/contracts';
 import type { FlowRun } from '@catbots/strategy-runtime/node-examples';
-import { configFields, editorDefinitions } from './flow-editor-model';
+import { configFields, editorDefinition } from './flow-editor-model';
 import { flowDocumentKey, useFlowWorkspaceState, type FlowWorkspaceState } from './flow-workspace-state';
 import { runLiveNode, marketCaption } from './live-node-run';
 import { NodeDataPanel, type DataPort } from './NodeDataPanel';
@@ -13,7 +13,7 @@ type Node = ChatFlowDraft['document']['nodes'][number];
 export function NodeConfiguration({ draft, node, disabled, onSave, onClose, onDebug, initialRun, nodeApi, workspace: sharedWorkspace, onSelectNode, connections }: {
   connections?: ReactNode; workspace?: FlowWorkspaceState; nodeApi?: CatbotsDesktopApi['nodes']; initialRun?: FlowRun | null; draft: ChatFlowDraft; node: Node; disabled?: boolean; onSave?: (node: Node) => Promise<void>; onClose(): void; onDebug?(run: FlowRun): void; onSelectNode?(id: string): void;
 }) {
-  const def = editorDefinitions.get(node.type)!;
+  const def = editorDefinition(node)!;
   const visual = nodePresentation[nodeVisualCategory(def.category, node.type)];
   const NodeIcon = visual.icon;
   const localWorkspace = useFlowWorkspaceState();
@@ -33,14 +33,14 @@ export function NodeConfiguration({ draft, node, disabled, onSave, onClose, onDe
   const anyDirty = draft.document.nodes.some(item => workspace.edits[item.id] && JSON.stringify(workspace.edits[item.id]!.config) !== JSON.stringify(item.config));
   const stale = !!record && (record.documentKey !== flowDocumentKey(draft) || record.run.market !== market || anyDirty);
   const trace = run?.trace.find(item => item.nodeId === node.id);
-  const fields = Object.entries(configFields(node.type).properties ?? {});
+  const fields = Object.entries(configFields(node.type, node.version).properties ?? {});
   const label = (key: string) => key.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/^./, value => value.toUpperCase());
   const ports = (direction: 'inputs' | 'outputs'): DataPort[] => Object.entries(def[direction]).map(([name, type]) => ({
     name, type, value: trace?.[direction][name],
     connections: draft.document.edges.filter(edge => direction === 'inputs' ? edge.target === node.id && edge.targetPort === name : edge.source === node.id && edge.sourcePort === name).map(edge => {
       const nodeId = direction === 'inputs' ? edge.source : edge.target;
       const connected = draft.document.nodes.find(item => item.id === nodeId);
-      return { nodeId, label: editorDefinitions.get(connected?.type ?? '')?.title ?? nodeId, port: direction === 'inputs' ? edge.sourcePort : edge.targetPort };
+      return { nodeId, label: editorDefinition(connected)?.title ?? nodeId, port: direction === 'inputs' ? edge.sourcePort : edge.targetPort };
     }),
   }));
   const execute = async () => {
@@ -59,7 +59,7 @@ export function NodeConfiguration({ draft, node, disabled, onSave, onClose, onDe
   };
   return <NodeDetailLayout header={<header className="node-detail-header">
     <div className={`node-detail-identity node-category-${nodeVisualCategory(def.category, node.type)}`}><span className="strategy-node-icon"><NodeIcon size={22} weight="duotone" aria-hidden="true" /></span><h2>{def.title}</h2><Badge variant="secondary">{visual.label}</Badge></div>
-    {onSelectNode && <Select size="sm" label="Node" value={node.id} onValueChange={id => onSelectNode(String(id))} renderValue={id => editorDefinitions.get(draft.document.nodes.find(item => item.id === id)?.type ?? '')?.title ?? String(id)}>{draft.document.nodes.map(item => <Select.Option key={item.id} value={item.id}>{editorDefinitions.get(item.type)?.title ?? item.type} · {item.id}</Select.Option>)}</Select>}
+    {onSelectNode && <Select size="sm" label="Node" value={node.id} onValueChange={id => onSelectNode(String(id))} renderValue={id => editorDefinition(draft.document.nodes.find(item => item.id === id))?.title ?? String(id)}>{draft.document.nodes.map(item => <Select.Option key={item.id} value={item.id}>{editorDefinition(item)?.title ?? item.type} · {item.id}</Select.Option>)}</Select>}
     <Button size="sm" variant="ghost" onClick={onClose}><ArrowLeftIcon size={14} aria-hidden="true" />Back to canvas</Button>
   </header>} input={<NodeDataPanel key={`in:${node.id}:${run?.runId}`} direction="input" ports={ports('inputs')} trigger={def.category === 'trigger'} onSelectNode={onSelectNode} />} output={<NodeDataPanel key={`out:${node.id}:${run?.runId}`} direction="output" ports={ports('outputs')} onSelectNode={onSelectNode} />} parameters={<>
     <div className="node-parameters-heading"><h3>Configuration</h3><Button size="sm" variant="primary" loading={running} disabled={anyDirty || disabled || running || saving || !market.trim()} onClick={() => void execute()}><PlayIcon size={14} weight="fill" aria-hidden="true" />Execute step</Button></div>

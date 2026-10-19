@@ -1,4 +1,4 @@
-import { directionalDefinition } from './directional';
+import { directionalDefinition, composableDirectionalDefinition } from './directional';
 import { z } from 'zod';
 import { definePackage, ready, type FlowContext, type OrderPlan, type FlowDefinition } from '@catbots/node-kit';
 
@@ -95,4 +95,4 @@ function strategyDefinition(type:'dca'|'grid'|'smart_order'):FlowDefinition {
     },
   };
 }
-export const strategyPackage=definePackage('@catbots/nodes-strategy',[...(['dca','grid','smart_order'] as const).map(strategyDefinition), directionalDefinition]);
+export const strategyPackage=definePackage('@catbots/nodes-strategy',[...(['dca','grid','smart_order'] as const).map(strategyDefinition), directionalDefinition, composableDirectionalDefinition]);
