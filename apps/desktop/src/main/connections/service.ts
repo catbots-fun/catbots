@@ -54,7 +54,8 @@ export class ConnectionsService {
   }
   assertBotRemovable(botId:string) {
     const run=this.runner.get(botId);
-    if(this.starting.has(botId)||run && ['running','stopping','interrupted'].includes(run.status)) throw new Error('BOT_ACTIVE');
+    if(this.starting.has(botId)||this.runner.isBusy(botId)||run && ['running','stopping','interrupted'].includes(run.status)) throw new Error('BOT_ACTIVE');
+    if(run?.closeResult && run.closeResult !== 'closed') throw new Error('BOT_UNRESOLVED');
     if(run?.orders.some(order=>['uncertain','submitting'].includes(order.status))) throw new Error('BOT_UNRESOLVED');
   }
   async dispose() {
@@ -111,7 +112,7 @@ export class ConnectionsService {
     if (input.action === "save_target") {
       if (
         this.starting.has(botId) ||
-        ["running", "stopping"].includes(this.runner.get(botId)?.status ?? "")
+        this.runner.isBusy(botId) || ["running", "stopping"].includes(this.runner.get(botId)?.status ?? "")
       )
         throw new Error("Stop the bot before changing its target");
       const connection = this.connections.find(
@@ -234,6 +235,15 @@ export class ConnectionsService {
   }
   async command(raw: unknown): Promise<ConnectionsView> {
     const input = ConnectionCommandSchema.parse(raw);
+    if (input.action === 'close_flow_position') {
+      const deployment = this.runner.get(input.botId);
+      if (!deployment || deployment.id !== input.deploymentId || !deployment.closePositionSupported) throw new Error('Supported deployment unavailable');
+      if (input.confirmation !== `CLOSE ${deployment.target.market}`) throw new Error('Exact market confirmation required');
+      const connection = this.connections.find(item => item.id === deployment.target.connectionId);
+      if (!connection || !this.authorization) throw new Error('Saved connection unavailable');
+      const key = await this.authorization.executionKey(connection);
+      return { ...this.view(), deployment: await this.runner.closePosition(input.botId, input.deploymentId, input.confirmation, new HyperliquidFlowVenue(connection, deployment.target, key)) };
+    }
     if (input.action === 'set_flow_entries_paused') return { ...this.view(), deployment: this.runner.setEntriesPaused(input.botId, input.deploymentId, input.paused) };
     if (input.action === 'get_flow_audit_summary') return { ...this.view(), auditSummary: this.runner.auditSummary(input.botId) };
     if (input.action === "get_flow_audit") {

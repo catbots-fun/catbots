@@ -5,6 +5,17 @@ import { afterEach, expect, it, vi } from 'vitest';
 import type { ConnectionCommand, FlowDeployment } from '@catbots/contracts';
 import { ExecutionTargetPanel } from '../src/renderer/workbench/ExecutionTargetPanel';
 afterEach(cleanup);
+it('requires typed confirmation before sending a deployment-bound close', async () => {
+ const deployment:FlowDeployment={id:'00000000-0000-4000-8000-000000000004',botId:'00000000-0000-4000-8000-000000000001',version:1,environment:'testnet',target:{botId:'00000000-0000-4000-8000-000000000001',connectionId:'',accountId:'',market:'SOL-PERP',maxOrderUsd:50,maxPositionUsd:100},status:'running',startedAt:new Date().toISOString(),cycles:1,orders:[],events:[],closePositionSupported:true,position:.2};
+ const command=vi.fn(async(_input:ConnectionCommand)=>({adapters:[],connections:[],deployment}));
+ render(<ExecutionTargetPanel botId={deployment.botId} api={{command}}/>);
+ const button=await screen.findByRole('button',{name:'Close position & stop'});
+ expect((button as HTMLButtonElement).disabled).toBe(true);
+ expect(command).not.toHaveBeenCalledWith(expect.objectContaining({action:'close_flow_position'}));
+ await userEvent.type(screen.getByLabelText('Close confirmation'),'CLOSE SOL-PERP');
+ await userEvent.click(button);
+ expect(command).toHaveBeenCalledWith({action:'close_flow_position',botId:deployment.botId,deploymentId:deployment.id,confirmation:'CLOSE SOL-PERP'});
+});
 it('separates pause entries from stop runtime and binds changes to the deployment', async () => {
   let deployment:FlowDeployment={id:'00000000-0000-4000-8000-000000000004',botId:'00000000-0000-4000-8000-000000000001',version:1,environment:'testnet',target:{botId:'00000000-0000-4000-8000-000000000001',connectionId:'',accountId:'',market:'SOL-PERP',maxOrderUsd:50,maxPositionUsd:100},status:'running',startedAt:new Date().toISOString(),cycles:1,orders:[],events:[],entryPauseSupported:true};
   const command=vi.fn(async(input:ConnectionCommand)=>{
