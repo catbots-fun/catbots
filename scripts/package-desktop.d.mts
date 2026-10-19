@@ -1,7 +1,7 @@
 import type { EventEmitter } from 'node:events';
 
 export type SpawnedChild = EventEmitter & { kill(signal: string): void };
-export type ProcessOptions = { detached?: boolean; stdio?: 'ignore' | 'inherit'; windowsHide?: boolean };
+export type ProcessOptions = { detached?: boolean; env?: NodeJS.ProcessEnv; stdio?: 'ignore' | 'inherit'; windowsHide?: boolean };
 export type RunCommand = (command: string, args: string[], cwd?: string, onSpawn?: (child: SpawnedChild) => void, processOptions?: ProcessOptions) => Promise<void>;
 export function createRunner(spawnCommand?: (command: string, args: string[], options: { cwd: string; env: NodeJS.ProcessEnv; stdio: 'inherit' } & ProcessOptions) => SpawnedChild): RunCommand;
 export type SignalOptions = { on(signal: string, handler: () => Promise<void>): void; off(signal: string, handler: () => Promise<void>): void; exit(code: number): void; report?(message: string): void };

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 import { afterEach, describe, expect, it } from 'vitest';
-import forgeConfig, { assertForgeReleaseTrust } from '../forge.config';
+import forgeConfig, { assertForgeMakeReady, assertForgeReleaseTrust, runForgeReleaseTrustGate } from '../forge.config';
 import { verifyProductionPackage } from '../../../scripts/verify-package-contents.mjs';
 
 const repository = resolve(import.meta.dirname, '../../..');
@@ -226,6 +226,81 @@ async function writeExecutable(path: string, value: string) {
 }
 
 describe('signed macOS bootstrap installer', () => {
+  it('wires an independent preMake release gate for direct Forge make invocations', async () => {
+    expect(forgeConfig.hooks?.preMake).toBeTypeOf('function');
+    await expect(assertForgeMakeReady({
+      argv: ['node', 'electron-forge-make'],
+      trustFile: undefined,
+      expectedFingerprint: undefined,
+    })).rejects.toThrow('Production packaging requires');
+  });
+
+  it('allows the Forge start lifecycle without production release trust', async () => {
+    await expect(runForgeReleaseTrustGate({
+      argv: ['node', 'electron-forge', 'start'],
+      orchestratorIntent: 'start',
+      orchestratorParentPid: '42',
+      ancestorPids: [42],
+      trustFile: undefined,
+      expectedFingerprint: undefined,
+    })).resolves.toBeUndefined();
+  });
+
+  it.each(['package', 'make'] as const)('keeps the Forge %s lifecycle fail-closed without release trust', async (command) => {
+    await expect(runForgeReleaseTrustGate({
+      argv: ['node', 'electron-forge', command],
+      orchestratorIntent: command,
+      orchestratorParentPid: '42',
+      ancestorPids: [42],
+      trustFile: undefined,
+      expectedFingerprint: undefined,
+    })).rejects.toThrow('Production packaging requires');
+  });
+
+  it('rejects a spoofed orchestrator lifecycle that disagrees with the Forge command', async () => {
+    await expect(runForgeReleaseTrustGate({
+      argv: ['node', 'electron-forge', 'start'],
+      orchestratorIntent: 'package',
+      orchestratorParentPid: '42',
+      ancestorPids: [42],
+      trustFile: undefined,
+      expectedFingerprint: undefined,
+    })).rejects.toThrow('FORGE_LIFECYCLE_MISMATCH');
+  });
+
+  it('accepts the package-script start lifecycle when Forge omits its subcommand from argv', async () => {
+    await expect(runForgeReleaseTrustGate({
+      argv: ['node', 'electron-forge'],
+      npmLifecycle: 'start',
+      orchestratorIntent: 'start',
+      orchestratorParentPid: '42',
+      ancestorPids: [91, 42],
+      trustFile: undefined,
+      expectedFingerprint: undefined,
+    })).resolves.toBeUndefined();
+  });
+
+  it('rejects an inherited start intent from any process except the orchestrator parent', async () => {
+    await expect(runForgeReleaseTrustGate({
+      argv: ['node', 'electron-forge'],
+      npmLifecycle: 'start',
+      orchestratorIntent: 'start',
+      orchestratorParentPid: '41',
+      ancestorPids: [42],
+      trustFile: undefined,
+      expectedFingerprint: undefined,
+    })).rejects.toThrow('FORGE_LIFECYCLE_MISMATCH');
+  });
+
+  it('does not trust a spoofed package-script lifecycle without the orchestrator capability', async () => {
+    await expect(runForgeReleaseTrustGate({
+      argv: ['node', 'electron-forge'],
+      npmLifecycle: 'start',
+      trustFile: undefined,
+      expectedFingerprint: undefined,
+    })).rejects.toThrow('Production packaging requires');
+  });
+
   it('fails closed in the direct Forge packaging hook before sentinel artifacts are produced', async () => {
     await expect(assertForgeReleaseTrust(undefined, undefined)).rejects.toThrow('Production packaging requires');
   });

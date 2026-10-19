@@ -217,6 +217,7 @@ export function createApplicationHandlers(dependencies: IpcHandlerDependencies) 
         dependencies.connections?.assertBotRemovable(request.botId);
         if (!dependencies.botRepository.remove) throw new Error('Unavailable');
         dependencies.botRepository.remove(request.botId);
+        dependencies.connections?.removeBotTarget(request.botId);
       } catch (error) {
         throw new IpcRequestError(error instanceof Error && ['BOT_ACTIVE','BOT_UNRESOLVED'].includes(error.message) ? error.message : 'BOT_DELETE_FAILED');
       }

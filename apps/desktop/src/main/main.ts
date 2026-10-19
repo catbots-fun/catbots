@@ -158,7 +158,7 @@ if (ownsApplicationInstance) void app.whenReady()
       });
       try { await shell.openExternal(walletBridge.origin); }
       catch (error) { await walletBridge.close(); walletBridge = undefined; throw error; }
-    }, botId => nodePackages.flowStore().get(botId));
+    }, botId => nodePackages.flowStore().get(botId), botId => botRepository.exists(botId));
     connections.startIncidentMonitoring(createIncidentNotifier(options => {
       if (!Notification.isSupported()) throw new Error('Notification unavailable');
       return new Notification(options);

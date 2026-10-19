@@ -1,10 +1,11 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, statSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import { ConnectionsService } from '../src/main/connections/service';
 import { FlowAuditStore } from '../src/main/connections/flow-audit';
 import { HyperliquidAdapter, type ExchangeAdapter } from '../src/main/connections/adapters';
+import type { ExchangeActivity } from '@catbots/contracts';
 const directories:string[]=[];
 afterEach(()=>directories.splice(0).forEach(path=>rmSync(path,{recursive:true,force:true})));
 const file=()=>{const path=mkdtempSync(join(tmpdir(),'connections-'));directories.push(path);return join(path,'saved.json');};
@@ -120,4 +121,266 @@ it('shares account snapshots across bots without assigning manual orders to a bo
  expect(failed.botOverview?.[0].activity).toBeUndefined();
  expect(failed.botOverview?.[0].activityError).toBe('Exchange data unavailable. Retry refresh.');
  expect(failed.botOverview?.[1].activityError).toBeUndefined();
+});
+
+it('prunes a persisted target for a deleted bot after restart and removes its connection immediately', async () => {
+ const adapter:ExchangeAdapter={descriptor:{id:'test',name:'Test',environments:['testnet'],authentication:['public-address'],capabilities:{accountDiscovery:true,markets:['perpetual'],trading:false}},normalizeOwner:v=>v,discover:async()=>[{id:'sub',address:'sub',name:'Sub',kind:'subaccount',equity:'100',withdrawable:'100',positions:0}]};
+ const path=file(),botId='00000000-0000-4000-8000-000000000011';
+ const initial=new ConnectionsService(path,[adapter],undefined,undefined,undefined,()=>true);
+ const connected=await initial.command({action:'connect',adapterId:'test',name:'A',environment:'testnet',owner:'owner'});
+ await initial.command({action:'save_target',target:{botId,connectionId:connected.connections[0].id,accountId:'sub',market:'ETH-PERP',maxPositionUsd:500,maxOrderUsd:100}});
+ await initial.dispose();
+
+ const restarted=new ConnectionsService(path,[adapter],undefined,undefined,undefined,()=>false);
+ await expect(restarted.command({action:'remove',id:connected.connections[0].id})).resolves.toMatchObject({connections:[]});
+ expect(JSON.parse(readFileSync(`${path}.targets`,'utf8'))).toEqual({});
+ expect(statSync(`${path}.targets`).mode & 0o777).toBe(0o600);
+ await restarted.dispose();
+});
+
+it('keeps a connection selected by a real bot and remains conservative without a bot source of truth', async () => {
+ const adapter:ExchangeAdapter={descriptor:{id:'test',name:'Test',environments:['testnet'],authentication:['public-address'],capabilities:{accountDiscovery:true,markets:['perpetual'],trading:false}},normalizeOwner:v=>v,discover:async()=>[{id:'sub',address:'sub',name:'Sub',kind:'subaccount',equity:'100',withdrawable:'100',positions:0}]};
+ const path=file(),botId='00000000-0000-4000-8000-000000000012';
+ const service=new ConnectionsService(path,[adapter],undefined,undefined,undefined,()=>true);
+ const connected=await service.command({action:'connect',adapterId:'test',name:'A',environment:'testnet',owner:'owner'});
+ await service.command({action:'save_target',target:{botId,connectionId:connected.connections[0].id,accountId:'sub',market:'ETH-PERP',maxPositionUsd:500,maxOrderUsd:100}});
+ await expect(service.command({action:'remove',id:connected.connections[0].id})).rejects.toThrow('selected by a bot');
+ await service.dispose();
+
+ const conservative=new ConnectionsService(path,[adapter]);
+ await expect(conservative.command({action:'remove',id:connected.connections[0].id})).rejects.toThrow('selected by a bot');
+ await conservative.dispose();
+});
+
+it.each([
+ ['active','running',[]],
+ ['unresolved','failed',[{id:'order',status:'uncertain',at:'2026-10-18T00:00:00.000Z'}]],
+] as const)('never removes a connection with an %s persisted runner binding', async (_label,status,orders) => {
+ const adapter:ExchangeAdapter={descriptor:{id:'test',name:'Test',environments:['testnet'],authentication:['public-address'],capabilities:{accountDiscovery:true,markets:['perpetual'],trading:false}},normalizeOwner:v=>v,discover:async()=>[{id:'sub',address:'sub',name:'Sub',kind:'subaccount',equity:'100',withdrawable:'100',positions:0}],...(_label==='active'?{activity:async()=>({fetchedAt:'2026-10-18T00:00:00.000Z',positions:[],orders:[]})}:{})};
+ const path=file(),botId='00000000-0000-4000-8000-000000000013';
+ const setup=new ConnectionsService(path,[adapter],undefined,undefined,undefined,()=>false);
+ const connected=await setup.command({action:'connect',adapterId:'test',name:'A',environment:'testnet',owner:'owner'});
+ const target={botId,connectionId:connected.connections[0].id,accountId:'sub',market:'ETH-PERP',maxPositionUsd:500,maxOrderUsd:100};
+ await setup.dispose();
+ writeFileSync(`${path}.runtime`,JSON.stringify({[botId]:{view:{id:'deployment',botId,version:1,environment:'testnet',target,status,startedAt:'2026-10-18T00:00:00.000Z',cycles:0,orders,events:[]},document:{nodes:[],edges:[]},target,state:{},fills:[],lastBucket:-1}}));
+
+ const restarted=new ConnectionsService(path,[adapter],undefined,undefined,undefined,()=>false);
+ await expect(restarted.command({action:'remove',id:connected.connections[0].id})).rejects.toThrow('active or unresolved');
+ expect((await restarted.command({action:'list'})).connections).toHaveLength(1);
+ await restarted.dispose();
+});
+
+it('treats open native protection as unresolved when deleting its bot', async () => {
+ const path=file(),botId='00000000-0000-4000-8000-000000000015';
+ const target={botId,connectionId:'00000000-0000-4000-8000-000000000025',accountId:'sub',market:'ETH-PERP',maxPositionUsd:500,maxOrderUsd:100};
+ writeFileSync(`${path}.runtime`,JSON.stringify({[botId]:{view:{id:'deployment',botId,version:1,environment:'testnet',target,status:'failed',startedAt:'2026-10-18T00:00:00.000Z',cycles:0,orders:[],events:[]},document:{nodes:[],edges:[]},target,state:{},fills:[],lastBucket:-1,protection:{orders:[{cloid:'protection',kind:'stop',triggerPrice:100,state:'open'}],retiring:[],quantity:1,entry:100,generation:1}}}));
+ const service=new ConnectionsService(path,[]);
+
+ expect(()=>service.assertBotRemovable(botId)).toThrow('BOT_UNRESOLVED');
+
+ await service.dispose();
+});
+
+it.each([
+ ['stopped expected position','stopped',{expectedPosition:0.25},true],
+ ['failed expected position','failed',{expectedPosition:-0.25},true],
+ ['legacy view position','stopped',{viewPosition:0.25},true],
+ ['pending native exit','failed',{expectedPosition:0,nativeExitPending:true},true],
+ ['partial native exit','stopped',{expectedPosition:0,nativePartial:true},true],
+ ['flat terminal record','stopped',{expectedPosition:0,viewPosition:0,nativeExitPending:false,nativePartial:false},false],
+] as const)('%s is classified by exposure safety before bot or connection removal', async (_label,status,state,blocked) => {
+ const adapter:ExchangeAdapter={descriptor:{id:'test',name:'Test',environments:['testnet'],authentication:['public-address'],capabilities:{accountDiscovery:true,markets:['perpetual'],trading:false}},normalizeOwner:v=>v,discover:async()=>[{id:'sub',address:'sub',name:'Sub',kind:'subaccount',equity:'100',withdrawable:'100',positions:0}]};
+ const path=file(),botId='00000000-0000-4000-8000-000000000016';
+ const setup=new ConnectionsService(path,[adapter],undefined,undefined,undefined,()=>false);
+ const connected=await setup.command({action:'connect',adapterId:'test',name:'A',environment:'testnet',owner:'owner'});
+ const target={botId,connectionId:connected.connections[0].id,accountId:'sub',market:'ETH-PERP',maxPositionUsd:500,maxOrderUsd:100};
+ await setup.command({action:'save_target',target});
+ await setup.dispose();
+ const {viewPosition,...storedState}=state as typeof state & {viewPosition?:number};
+ writeFileSync(`${path}.runtime`,JSON.stringify({[botId]:{view:{id:'deployment',botId,version:1,environment:'testnet',target,status,startedAt:'2026-10-18T00:00:00.000Z',cycles:0,orders:[],events:[],...(viewPosition===undefined?{}:{position:viewPosition})},document:{nodes:[],edges:[]},target,state:{},fills:[],lastBucket:-1,...storedState}}));
+ const restarted=new ConnectionsService(path,[adapter],undefined,undefined,undefined,()=>false);
+
+ if(blocked) {
+  expect(()=>restarted.assertBotRemovable(botId)).toThrow('BOT_UNRESOLVED');
+  await expect(restarted.command({action:'remove',id:connected.connections[0].id})).rejects.toThrow('active or unresolved');
+  expect((await restarted.command({action:'list'})).connections).toHaveLength(1);
+ } else {
+  expect(()=>restarted.assertBotRemovable(botId)).not.toThrow();
+  await expect(restarted.command({action:'remove',id:connected.connections[0].id})).resolves.toMatchObject({connections:[]});
+ }
+ await restarted.dispose();
+});
+
+it('removes seven orphan targets with stale terminal records after one fresh flat-account check', async () => {
+ const activity=vi.fn(async()=>({fetchedAt:'2026-10-18T00:00:00.000Z',positions:[],orders:[]}));
+ const adapter:ExchangeAdapter={descriptor:{id:'hyperliquid',name:'Hyperliquid',environments:['testnet'],authentication:['public-address'],capabilities:{accountDiscovery:true,markets:['perpetual'],trading:false}},normalizeOwner:v=>v,discover:async()=>[{id:'sub',address:'account-address',name:'Sub',kind:'subaccount',equity:'100',withdrawable:'100',positions:0}],activity};
+ const path=file(),botIds=Array.from({length:7},(_,index)=>`00000000-0000-4000-8000-${String(index+31).padStart(12,'0')}`);
+ const setup=new ConnectionsService(path,[adapter],undefined,undefined,undefined,()=>false);
+ const connected=await setup.command({action:'connect',adapterId:'hyperliquid',name:'A',environment:'testnet',owner:'owner'});
+ const targets=botIds.map(botId=>({botId,connectionId:connected.connections[0].id,accountId:'sub',market:'ETH-PERP',maxPositionUsd:500,maxOrderUsd:100}));
+ for(const target of targets) await setup.command({action:'save_target',target});
+ await setup.dispose();
+ const records=Object.fromEntries(targets.slice(0,3).map((target,index)=>[target.botId,{view:{id:`deployment-${index}`,botId:target.botId,version:1,environment:'testnet',target,status:index===1?'failed':'stopped',startedAt:'2026-10-18T00:00:00.000Z',cycles:0,orders:[],events:[],...(index<2?{position:0.14}:{})},document:{nodes:[],edges:[]},target,state:{},fills:[],lastBucket:-1,...(index<2?{expectedPosition:0.14}:{pending:'0xdeadbeef'})}]));
+ writeFileSync(`${path}.runtime`,JSON.stringify(records));
+ const restarted=new ConnectionsService(path,[adapter],undefined,undefined,undefined,()=>false);
+
+ await expect(restarted.command({action:'remove',id:connected.connections[0].id})).resolves.toMatchObject({connections:[]});
+ expect(JSON.parse(readFileSync(`${path}.targets`,'utf8'))).toEqual({});
+ expect(JSON.parse(readFileSync(`${path}.runtime`,'utf8'))).toEqual({});
+ expect(activity).toHaveBeenCalledExactlyOnceWith('account-address','testnet');
+ await restarted.dispose();
+});
+
+it('does not overwrite a real bot target saved while terminal-account activity is loading', async () => {
+ let resolveActivity!:(activity:{fetchedAt:string;positions:[];orders:[]})=>void;
+ const activity=()=>new Promise<{fetchedAt:string;positions:[];orders:[]}>(resolve=>{resolveActivity=resolve;});
+ const adapter:ExchangeAdapter={descriptor:{id:'hyperliquid',name:'Hyperliquid',environments:['testnet'],authentication:['public-address'],capabilities:{accountDiscovery:true,markets:['perpetual'],trading:false}},normalizeOwner:v=>v,discover:async()=>[{id:'sub',address:'account-address',name:'Sub',kind:'subaccount',equity:'100',withdrawable:'100',positions:0}],activity};
+ const path=file(),orphanId='00000000-0000-4000-8000-000000000043',realId='00000000-0000-4000-8000-000000000044',existing=new Set<string>();
+ const service=new ConnectionsService(path,[adapter],undefined,undefined,undefined,botId=>existing.has(botId));
+ const connected=await service.command({action:'connect',adapterId:'hyperliquid',name:'A',environment:'testnet',owner:'owner'});
+ const orphan={botId:orphanId,connectionId:connected.connections[0].id,accountId:'sub',market:'ETH-PERP',maxPositionUsd:500,maxOrderUsd:100};
+ await service.command({action:'save_target',target:orphan});await service.dispose();
+ writeFileSync(`${path}.runtime`,JSON.stringify({[orphanId]:{view:{id:'deployment',botId:orphanId,version:1,environment:'testnet',target:orphan,status:'stopped',startedAt:'2026-10-18T00:00:00.000Z',cycles:0,orders:[],events:[],position:0.14},document:{nodes:[],edges:[]},target:orphan,state:{},fills:[],lastBucket:-1,expectedPosition:0.14}}));
+ const restarted=new ConnectionsService(path,[adapter],undefined,undefined,undefined,botId=>existing.has(botId));
+
+ const removing=restarted.command({action:'remove',id:connected.connections[0].id});
+ existing.add(realId);
+ const real={...orphan,botId:realId};
+ await restarted.command({action:'save_target',target:real});
+ resolveActivity({fetchedAt:'2026-10-18T00:00:00.000Z',positions:[],orders:[]});
+
+ await expect(removing).rejects.toThrow('selected by a bot');
+ expect((await restarted.command({action:'get_target',botId:realId})).executionTarget?.target).toEqual(real);
+ expect((await restarted.command({action:'list'})).connections).toHaveLength(1);
+ await restarted.dispose();
+});
+
+it.each([
+ ['a non-flat position',{fetchedAt:'2026-10-18T00:00:00.000Z',positions:[{market:'ETH-PERP',size:'0.14',entryPrice:'100',unrealizedPnl:'0'}],orders:[]}],
+ ['an open order',{fetchedAt:'2026-10-18T00:00:00.000Z',positions:[],orders:[{id:'1',market:'ETH-PERP',side:'Buy',size:'0.14',price:'99'}]}],
+] satisfies [string,ExchangeActivity][])('keeps an orphaned connection when fresh activity reports %s', async (_label,snapshot) => {
+ const adapter:ExchangeAdapter={descriptor:{id:'hyperliquid',name:'Hyperliquid',environments:['testnet'],authentication:['public-address'],capabilities:{accountDiscovery:true,markets:['perpetual'],trading:false}},normalizeOwner:v=>v,discover:async()=>[{id:'sub',address:'account-address',name:'Sub',kind:'subaccount',equity:'100',withdrawable:'100',positions:0}],activity:async()=>snapshot};
+ const path=file(),botId='00000000-0000-4000-8000-000000000041';
+ const setup=new ConnectionsService(path,[adapter],undefined,undefined,undefined,()=>false);
+ const connected=await setup.command({action:'connect',adapterId:'hyperliquid',name:'A',environment:'testnet',owner:'owner'});
+ const target={botId,connectionId:connected.connections[0].id,accountId:'sub',market:'ETH-PERP',maxPositionUsd:500,maxOrderUsd:100};
+ await setup.command({action:'save_target',target});await setup.dispose();
+ writeFileSync(`${path}.runtime`,JSON.stringify({[botId]:{view:{id:'deployment',botId,version:1,environment:'testnet',target,status:'stopped',startedAt:'2026-10-18T00:00:00.000Z',cycles:0,orders:[],events:[],position:0.14},document:{nodes:[],edges:[]},target,state:{},fills:[],lastBucket:-1,expectedPosition:0.14}}));
+ const restarted=new ConnectionsService(path,[adapter],undefined,undefined,undefined,()=>false);
+
+ await expect(restarted.command({action:'remove',id:connected.connections[0].id})).rejects.toThrow('active or unresolved');
+ expect((await restarted.command({action:'list'})).connections).toHaveLength(1);
+ await restarted.dispose();
+});
+
+it.each(['activity error','missing adapter','missing account','missing activity'] as const)('fails closed for terminal orphan cleanup on %s', async (failure) => {
+ const activity=failure==='activity error'?async()=>{throw new Error('offline');}:failure==='missing activity'?undefined:async()=>({fetchedAt:'2026-10-18T00:00:00.000Z',positions:[],orders:[]});
+ const adapter:ExchangeAdapter={descriptor:{id:'hyperliquid',name:'Hyperliquid',environments:['testnet'],authentication:['public-address'],capabilities:{accountDiscovery:true,markets:['perpetual'],trading:false}},normalizeOwner:v=>v,discover:async()=>[{id:'sub',address:'account-address',name:'Sub',kind:'subaccount',equity:'100',withdrawable:'100',positions:0}],...(activity?{activity}:{})};
+ const path=file(),botId='00000000-0000-4000-8000-000000000042';
+ const setup=new ConnectionsService(path,[adapter],undefined,undefined,undefined,()=>false);
+ const connected=await setup.command({action:'connect',adapterId:'hyperliquid',name:'A',environment:'testnet',owner:'owner'});
+ const target={botId,connectionId:connected.connections[0].id,accountId:'sub',market:'ETH-PERP',maxPositionUsd:500,maxOrderUsd:100};
+ await setup.command({action:'save_target',target});await setup.dispose();
+ if(failure==='missing account') writeFileSync(path,JSON.stringify(connected.connections.map(connection=>({...connection,accounts:[]}))),{mode:0o600});
+ writeFileSync(`${path}.runtime`,JSON.stringify({[botId]:{view:{id:'deployment',botId,version:1,environment:'testnet',target,status:'failed',startedAt:'2026-10-18T00:00:00.000Z',cycles:0,orders:[],events:[]},document:{nodes:[],edges:[]},target,state:{},fills:[],lastBucket:-1}}));
+ const restarted=new ConnectionsService(path,failure==='missing adapter'?[]:[adapter],undefined,undefined,undefined,()=>false);
+
+ await expect(restarted.command({action:'remove',id:connected.connections[0].id})).rejects.toThrow('active or unresolved');
+ expect((await restarted.command({action:'list'})).connections).toHaveLength(1);
+ await restarted.dispose();
+});
+
+it('does not remove a connection when atomic orphan-target cleanup fails', async () => {
+ const adapter:ExchangeAdapter={descriptor:{id:'test',name:'Test',environments:['testnet'],authentication:['public-address'],capabilities:{accountDiscovery:true,markets:['perpetual'],trading:false}},normalizeOwner:v=>v,discover:async()=>[{id:'sub',address:'sub',name:'Sub',kind:'subaccount',equity:'100',withdrawable:'100',positions:0}]};
+ const path=file(),botId='00000000-0000-4000-8000-000000000014';
+ const service=new ConnectionsService(path,[adapter],undefined,undefined,undefined,()=>false,()=>{throw new Error('disk full');});
+ const connected=await service.command({action:'connect',adapterId:'test',name:'A',environment:'testnet',owner:'owner'});
+ const target={botId,connectionId:connected.connections[0].id,accountId:'sub',market:'ETH-PERP',maxPositionUsd:500,maxOrderUsd:100};
+ // Seed the stale state directly because this service deliberately fails every target write.
+ writeFileSync(`${path}.targets`,JSON.stringify({[botId]:target}),{mode:0o600});
+
+ await expect(service.command({action:'remove',id:connected.connections[0].id})).rejects.toThrow('disk full');
+ expect((await service.command({action:'list'})).connections).toHaveLength(1);
+ expect(JSON.parse(readFileSync(`${path}.targets`,'utf8'))).toEqual({[botId]:target});
+ await service.dispose();
+});
+
+it('rejects a stale target and flow draft when the authoritative bot record is deleted', async () => {
+ const adapter:ExchangeAdapter={descriptor:{id:'hyperliquid',name:'Hyperliquid',environments:['testnet'],authentication:['wallet'],capabilities:{accountDiscovery:true,markets:['perpetual'],trading:true}},normalizeOwner:v=>v,discover:async()=>[{id:'sub',address:'sub',name:'Sub',kind:'subaccount',equity:'100',withdrawable:'100',positions:0}]};
+ const path=file(),botId='00000000-0000-4000-8000-000000000017';
+ let exists=true;
+ const authorization={executionKey:async()=>{throw new Error('authorization must not run for a deleted bot');}};
+ const staleDraft={botId,version:1,status:'valid' as const,document:{nodes:[],edges:[]},updatedAt:'2026-10-18T00:00:00.000Z'};
+ const service=new ConnectionsService(path,[adapter],authorization as never,undefined,()=>staleDraft as never,()=>exists);
+ const connected=await service.command({action:'connect',adapterId:'hyperliquid',name:'A',environment:'testnet',owner:'owner'});
+ await service.command({action:'save_target',target:{botId,connectionId:connected.connections[0].id,accountId:'sub',market:'ETH-PERP',maxPositionUsd:500,maxOrderUsd:100}});
+ exists=false;
+
+ await expect(service.command({action:'start_flow',botId,version:1,confirmation:'testnet:ETH-PERP'})).rejects.toThrow('Bot no longer exists');
+ expect((await service.command({action:'get_flow_runtime',botId})).deployment).toBeUndefined();
+ await service.dispose();
+});
+
+it('marks startup active before awaiting authorization so bot deletion cannot race it', async () => {
+ const adapter:ExchangeAdapter={descriptor:{id:'hyperliquid',name:'Hyperliquid',environments:['testnet'],authentication:['wallet'],capabilities:{accountDiscovery:true,markets:['perpetual'],trading:true}},normalizeOwner:v=>v,discover:async()=>[{id:'sub',address:'sub',name:'Sub',kind:'subaccount',equity:'100',withdrawable:'100',positions:0}]};
+ const path=file(),botId='00000000-0000-4000-8000-000000000018';
+ let rejectAuthorization!:(error:Error)=>void;
+ const authorization={executionKey:()=>new Promise<never>((_resolve,reject)=>{rejectAuthorization=reject;})};
+ const draft={botId,version:1,status:'valid' as const,document:{nodes:[],edges:[]},updatedAt:'2026-10-18T00:00:00.000Z'};
+ let exists=true;
+ const service=new ConnectionsService(path,[adapter],authorization as never,undefined,()=>draft as never,()=>exists);
+ const connected=await service.command({action:'connect',adapterId:'hyperliquid',name:'A',environment:'testnet',owner:'owner'});
+ await service.command({action:'save_target',target:{botId,connectionId:connected.connections[0].id,accountId:'sub',market:'ETH-PERP',maxPositionUsd:500,maxOrderUsd:100}});
+
+ const starting=service.command({action:'start_flow',botId,version:1,confirmation:'testnet:ETH-PERP'});
+ expect(()=>service.assertBotRemovable(botId)).toThrow('BOT_ACTIVE');
+ exists=false;
+ await expect(service.command({action:'remove',id:connected.connections[0].id})).rejects.toThrow('active or unresolved');
+ rejectAuthorization(new Error('stop test startup'));
+ await expect(starting).rejects.toThrow('stop test startup');
+ expect(()=>service.assertBotRemovable(botId)).not.toThrow();
+ await service.dispose();
+});
+
+it('rejects reconciliation for a deleted bot before acquiring credentials', async () => {
+ const adapter:ExchangeAdapter={descriptor:{id:'hyperliquid',name:'Hyperliquid',environments:['testnet'],authentication:['wallet'],capabilities:{accountDiscovery:true,markets:['perpetual'],trading:true}},normalizeOwner:v=>v,discover:async()=>[{id:'sub',address:'sub',name:'Sub',kind:'subaccount',equity:'100',withdrawable:'100',positions:0}]};
+ const path=file(),botId='00000000-0000-4000-8000-000000000045';
+ const authorization={executionKey:vi.fn(async()=>{throw new Error('must not acquire credentials');})};
+ const setup=new ConnectionsService(path,[adapter],authorization as never,undefined,undefined,()=>false);
+ const connected=await setup.command({action:'connect',adapterId:'hyperliquid',name:'A',environment:'testnet',owner:'owner'});
+ const target={botId,connectionId:connected.connections[0].id,accountId:'sub',market:'ETH-PERP',maxPositionUsd:500,maxOrderUsd:100};
+ await setup.dispose();
+ writeFileSync(`${path}.runtime`,JSON.stringify({[botId]:{view:{id:'deployment',botId,version:1,environment:'testnet',target,status:'failed',startedAt:'2026-10-18T00:00:00.000Z',cycles:0,orders:[],events:[]},document:{nodes:[],edges:[]},target,state:{},fills:[],lastBucket:-1,pending:'0xdeadbeef'}}));
+ const service=new ConnectionsService(path,[adapter],authorization as never,undefined,undefined,()=>false);
+
+ await expect(service.command({action:'reconcile_flow',botId})).rejects.toThrow('Bot no longer exists');
+ expect(authorization.executionKey).not.toHaveBeenCalled();
+ await service.dispose();
+});
+
+it('blocks connection removal throughout credential acquisition and runner reconciliation', async () => {
+ const adapter:ExchangeAdapter={descriptor:{id:'hyperliquid',name:'Hyperliquid',environments:['testnet'],authentication:['wallet'],capabilities:{accountDiscovery:true,markets:['perpetual'],trading:true}},normalizeOwner:v=>v,discover:async()=>[{id:'sub',address:'account-address',name:'Sub',kind:'subaccount',equity:'100',withdrawable:'100',positions:0}],activity:async()=>({fetchedAt:'2026-10-18T00:00:00.000Z',positions:[],orders:[]})};
+ const path=file(),botId='00000000-0000-4000-8000-000000000046';
+ let resolveKey!:(key:`0x${string}`)=>void,resolveRunner!:(value:undefined)=>void,exists=true;
+ const authorization={executionKey:()=>new Promise<`0x${string}`>(resolve=>{resolveKey=resolve;})};
+ const setup=new ConnectionsService(path,[adapter],authorization as never,undefined,undefined,()=>exists);
+ const connected=await setup.command({action:'connect',adapterId:'hyperliquid',name:'A',environment:'testnet',owner:'owner'});
+ const target={botId,connectionId:connected.connections[0].id,accountId:'sub',market:'ETH-PERP',maxPositionUsd:500,maxOrderUsd:100};
+ await setup.command({action:'save_target',target});await setup.dispose();
+ writeFileSync(`${path}.runtime`,JSON.stringify({[botId]:{view:{id:'deployment',botId,version:1,environment:'testnet',target,status:'failed',startedAt:'2026-10-18T00:00:00.000Z',cycles:0,orders:[],events:[]},document:{nodes:[],edges:[]},target,state:{},fills:[],lastBucket:-1,pending:'0xdeadbeef'}}));
+ const service=new ConnectionsService(path,[adapter],authorization as never,undefined,undefined,()=>exists);
+ const runner=(service as unknown as {runner:{reconcile:(botId:string,venue:unknown)=>Promise<undefined>}}).runner;
+ const reconcile=vi.fn(()=>new Promise<undefined>(resolve=>{resolveRunner=resolve;}));
+ runner.reconcile=reconcile;
+
+ const reconciling=service.command({action:'reconcile_flow',botId});
+ exists=false;
+ await expect(service.command({action:'remove',id:connected.connections[0].id})).rejects.toThrow('active or unresolved');
+ resolveKey(`0x${'1'.repeat(64)}`);
+ await vi.waitFor(()=>expect(reconcile).toHaveBeenCalledTimes(1));
+ await expect(service.command({action:'remove',id:connected.connections[0].id})).rejects.toThrow('active or unresolved');
+ resolveRunner(undefined);
+ await expect(reconciling).resolves.toMatchObject({deployment:undefined});
+ await expect(service.command({action:'remove',id:connected.connections[0].id})).resolves.toMatchObject({connections:[]});
+ await service.dispose();
 });

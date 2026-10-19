@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -23,6 +23,11 @@ import { ConfigRepository } from '../src/main/config/config-repository';
 import { assertTrustedAppSenderUrl } from '../src/main/ipc-security';
 import { createIpcHandlers, registerIpcHandlers, type IpcHandlerDependencies } from '../src/main/ipc/register-ipc';
 import { getSafeRelativePath } from '../src/main/register-app-protocol';
+import { BotRepository } from '../src/main/bots/bot-repository';
+import { ConnectionsService } from '../src/main/connections/service';
+import type { ExchangeAdapter } from '../src/main/connections/adapters';
+import { openDatabase } from '../src/main/storage/database';
+import { migrateDatabase } from '../src/main/storage/migrations';
 
 const electronBridge = vi.hoisted(() => ({
   exposeInMainWorld: vi.fn(),
@@ -395,6 +400,115 @@ describe('validated IPC handlers', () => {
 
     expect(error).toMatchObject({ code: 'BOT_LIST_FAILED' });
     expect(String(error)).not.toContain(secret);
+  });
+
+  it('removes the saved execution target after deleting a bot so its connection is immediately removable', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'bot-removal-'));
+    const database = openDatabase(':memory:');
+    try {
+      migrateDatabase(database);
+      const bots = new BotRepository(database);
+      const bot = bots.createDraft({ name: 'Delete me', dex: 'hyperliquid' });
+      const adapter: ExchangeAdapter = {
+        descriptor: { id: 'test', name: 'Test', environments: ['testnet'], authentication: ['public-address'], capabilities: { accountDiscovery: true, markets: ['perpetual'], trading: false } },
+        normalizeOwner: (value) => value,
+        discover: async () => [{ id: 'sub', address: 'sub', name: 'Sub', kind: 'subaccount', equity: '100', withdrawable: '100', positions: 0 }],
+      };
+      const path = join(directory, 'connections.json');
+      const connections = new ConnectionsService(path, [adapter], undefined, undefined, undefined, (botId) => bots.exists(botId));
+      const connected = await connections.command({ action: 'connect', adapterId: 'test', name: 'A', environment: 'testnet', owner: 'owner' });
+      const target = { botId: bot.id, connectionId: connected.connections[0]!.id, accountId: 'sub', market: 'ETH-PERP' as const, maxPositionUsd: 500, maxOrderUsd: 100 };
+      await connections.command({ action: 'save_target', target });
+      await connections.dispose();
+      await writeFile(`${path}.runtime`, JSON.stringify({ [bot.id]: {
+        view: { id: 'deployment', botId: bot.id, version: 1, environment: 'testnet', target, status: 'stopped', startedAt: '2026-10-18T00:00:00.000Z', cycles: 0, orders: [], events: [], position: 0 },
+        document: { nodes: [], edges: [] }, target, state: {}, fills: [], lastBucket: -1, expectedPosition: 0, nativeExitPending: false, nativePartial: false,
+      } }));
+      const restarted = new ConnectionsService(path, [adapter], undefined, undefined, undefined, (botId) => bots.exists(botId));
+      const handlers = createIpcHandlers({ ...createDependencies(), botRepository: bots, connections: restarted });
+
+      await handlers.removeBot(localEvent, { botId: bot.id });
+
+      expect(bots.exists(bot.id)).toBe(false);
+      expect((await restarted.command({ action: 'get_target', botId: bot.id })).executionTarget?.target).toBeNull();
+      await expect(restarted.command({ action: 'remove', id: connected.connections[0]!.id })).resolves.toMatchObject({ connections: [] });
+      await restarted.dispose();
+    } finally {
+      database.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps a bot and target when its stopped runner record still has exposure', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'bot-removal-exposure-'));
+    const database = openDatabase(':memory:');
+    try {
+      migrateDatabase(database);
+      const bots = new BotRepository(database);
+      const bot = bots.createDraft({ name: 'Still exposed', dex: 'hyperliquid' });
+      const adapter: ExchangeAdapter = {
+        descriptor: { id: 'test', name: 'Test', environments: ['testnet'], authentication: ['public-address'], capabilities: { accountDiscovery: true, markets: ['perpetual'], trading: false } },
+        normalizeOwner: (value) => value,
+        discover: async () => [{ id: 'sub', address: 'sub', name: 'Sub', kind: 'subaccount', equity: '100', withdrawable: '100', positions: 0 }],
+      };
+      const path = join(directory, 'connections.json');
+      const setup = new ConnectionsService(path, [adapter], undefined, undefined, undefined, (botId) => bots.exists(botId));
+      const connected = await setup.command({ action: 'connect', adapterId: 'test', name: 'A', environment: 'testnet', owner: 'owner' });
+      const target = { botId: bot.id, connectionId: connected.connections[0]!.id, accountId: 'sub', market: 'ETH-PERP' as const, maxPositionUsd: 500, maxOrderUsd: 100 };
+      await setup.command({ action: 'save_target', target });
+      await setup.dispose();
+      await writeFile(`${path}.runtime`, JSON.stringify({ [bot.id]: {
+        view: { id: 'deployment', botId: bot.id, version: 1, environment: 'testnet', target, status: 'stopped', startedAt: '2026-10-18T00:00:00.000Z', cycles: 0, orders: [], events: [], position: 0.25 },
+        document: { nodes: [], edges: [] }, target, state: {}, fills: [], lastBucket: -1, expectedPosition: 0.25,
+      } }));
+      const connections = new ConnectionsService(path, [adapter], undefined, undefined, undefined, (botId) => bots.exists(botId));
+      const handlers = createIpcHandlers({ ...createDependencies(), botRepository: bots, connections });
+
+      await expect(handlers.removeBot(localEvent, { botId: bot.id })).rejects.toThrow('BOT_UNRESOLVED');
+
+      expect(bots.exists(bot.id)).toBe(true);
+      expect((await connections.command({ action: 'get_target', botId: bot.id })).executionTarget?.target).toEqual(target);
+      await connections.dispose();
+    } finally {
+      database.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('does not report bot deletion success when target cleanup fails, without leaving a live bot broken', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'bot-removal-failure-'));
+    const database = openDatabase(':memory:');
+    try {
+      migrateDatabase(database);
+      const bots = new BotRepository(database);
+      const bot = bots.createDraft({ name: 'Delete safely', dex: 'hyperliquid' });
+      const targetPath = join(directory, 'connections.json');
+      const adapter: ExchangeAdapter = {
+        descriptor: { id: 'hyperliquid', name: 'Hyperliquid', environments: ['testnet'], authentication: ['wallet'], capabilities: { accountDiscovery: true, markets: ['perpetual'], trading: true } },
+        normalizeOwner: (value) => value,
+        discover: async () => [{ id: 'sub', address: 'sub', name: 'Sub', kind: 'subaccount', equity: '100', withdrawable: '100', positions: 0 }],
+      };
+      const setup = new ConnectionsService(targetPath, [adapter]);
+      const connected = await setup.command({ action: 'connect', adapterId: 'hyperliquid', name: 'A', environment: 'testnet', owner: 'owner' });
+      const target = { botId: bot.id, connectionId: connected.connections[0]!.id, accountId: 'sub', market: 'ETH-PERP' as const, maxPositionUsd: 500, maxOrderUsd: 100 };
+      await setup.command({ action: 'save_target', target });
+      await setup.dispose();
+      const authorization = { executionKey: async () => { throw new Error('authorization must not run for a deleted bot'); } };
+      const staleDraft = { botId: bot.id, version: 1, status: 'valid' as const, document: { nodes: [], edges: [] }, updatedAt: '2026-10-18T00:00:00.000Z' };
+      const connections = new ConnectionsService(targetPath, [adapter], authorization as never, undefined, () => staleDraft as never, (botId) => bots.exists(botId), () => { throw new Error('disk full'); });
+      const handlers = createIpcHandlers({ ...createDependencies(), botRepository: bots, connections });
+
+      await expect(handlers.removeBot(localEvent, { botId: bot.id })).rejects.toThrow('BOT_DELETE_FAILED');
+
+      expect(bots.exists(bot.id)).toBe(false);
+      expect((await connections.command({ action: 'get_target', botId: bot.id })).executionTarget?.target).toEqual(target);
+      await expect(connections.command({ action: 'start_flow', botId: bot.id, version: 1, confirmation: 'testnet:ETH-PERP' })).rejects.toThrow('Bot no longer exists');
+      expect((await connections.command({ action: 'get_flow_runtime', botId: bot.id })).deployment).toBeUndefined();
+      await connections.dispose();
+    } finally {
+      database.close();
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 
   it('validates every workbench request before service access', async () => {

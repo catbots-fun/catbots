@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { cp } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -21,6 +22,87 @@ export async function assertForgeReleaseTrust(
   expectedFingerprint = process.env.CATBOTS_RELEASE_TRUST_FINGERPRINT,
 ): Promise<void> {
   await assertReleaseTrustFile(path, expectedFingerprint);
+}
+
+type ForgeLifecycle = 'start' | 'package' | 'make';
+
+function forgeLifecycleFromArgv(argv: readonly string[]): ForgeLifecycle | undefined {
+  return argv.find((argument): argument is ForgeLifecycle => (
+    argument === 'start' || argument === 'package' || argument === 'make'
+  ));
+}
+
+function forgeLifecycleFromString(value: string | undefined): ForgeLifecycle | undefined {
+  return value === 'start' || value === 'package' || value === 'make' ? value : undefined;
+}
+
+function forgeAncestorPids(startPid = process.ppid): number[] {
+  const ancestors: number[] = [];
+  let pid = startPid;
+  for (let depth = 0; depth < 4 && pid > 1; depth += 1) {
+    ancestors.push(pid);
+    try {
+      const parent = Number(execFileSync('/bin/ps', ['-o', 'ppid=', '-p', String(pid)], { encoding: 'utf8' }).trim());
+      if (!Number.isSafeInteger(parent) || parent <= 1 || parent === pid) break;
+      pid = parent;
+    } catch {
+      break;
+    }
+  }
+  return ancestors;
+}
+
+export async function runForgeReleaseTrustGate({
+  argv = process.argv,
+  npmLifecycle = process.env.npm_lifecycle_event,
+  orchestratorIntent = process.env.CATBOTS_INTERNAL_FORGE_LIFECYCLE,
+  orchestratorParentPid = process.env.CATBOTS_INTERNAL_FORGE_PARENT_PID,
+  ancestorPids = forgeAncestorPids(),
+  trustFile = process.env.CATBOTS_RELEASE_TRUST_FILE,
+  expectedFingerprint = process.env.CATBOTS_RELEASE_TRUST_FINGERPRINT,
+}: {
+  argv?: readonly string[];
+  npmLifecycle?: string;
+  orchestratorIntent?: string;
+  orchestratorParentPid?: string;
+  ancestorPids?: readonly number[];
+  trustFile?: string;
+  expectedFingerprint?: string;
+} = {}): Promise<void> {
+  const argvLifecycle = forgeLifecycleFromArgv(argv);
+  const packageScriptLifecycle = forgeLifecycleFromString(npmLifecycle);
+  if (argvLifecycle !== undefined && packageScriptLifecycle !== undefined && argvLifecycle !== packageScriptLifecycle) {
+    throw new Error('FORGE_LIFECYCLE_MISMATCH');
+  }
+  const lifecycle = argvLifecycle ?? packageScriptLifecycle;
+  let hasValidatedOrchestratorIntent = false;
+  if (orchestratorIntent !== undefined) {
+    if (
+      forgeLifecycleFromString(orchestratorIntent) === undefined
+      || orchestratorIntent !== lifecycle
+      || !ancestorPids.includes(Number(orchestratorParentPid))
+    ) {
+      throw new Error('FORGE_LIFECYCLE_MISMATCH');
+    }
+    hasValidatedOrchestratorIntent = true;
+  }
+  if (argvLifecycle === 'start' || (hasValidatedOrchestratorIntent && lifecycle === 'start')) return;
+  await assertForgeReleaseTrust(trustFile, expectedFingerprint);
+}
+
+export async function assertForgeMakeReady({
+  argv = process.argv,
+  trustFile = process.env.CATBOTS_RELEASE_TRUST_FILE,
+  expectedFingerprint = process.env.CATBOTS_RELEASE_TRUST_FINGERPRINT,
+}: {
+  argv?: readonly string[];
+  trustFile?: string;
+  expectedFingerprint?: string;
+} = {}): Promise<void> {
+  await assertForgeReleaseTrust(trustFile, expectedFingerprint);
+  if (argv.some((argument) => argument === '--skip-package' || argument.startsWith('--skip-package='))) {
+    throw new Error('FORGE_SKIP_PACKAGE_FORBIDDEN');
+  }
 }
 
 export async function verifyForgePackageOutputs(outputPaths: string[]): Promise<void> {
@@ -61,8 +143,9 @@ const config: ForgeConfig = {
     },
   },
   hooks: {
-    generateAssets: async () => assertForgeReleaseTrust(),
-    prePackage: async () => assertForgeReleaseTrust(),
+    generateAssets: async () => runForgeReleaseTrustGate(),
+    prePackage: async () => runForgeReleaseTrustGate(),
+    preMake: async () => assertForgeMakeReady(),
     packageAfterCopy: stageSqliteRuntimeDependencies,
     postPackage: async (_forgeConfig, packageResult) => verifyForgePackageOutputs(packageResult.outputPaths),
   },
