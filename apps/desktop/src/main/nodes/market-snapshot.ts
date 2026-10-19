@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { StaleMarketDataError } from './market-data-error';
 import { MarketSnapshotRequestSchema, type MarketSnapshot } from '@catbots/contracts';
 const numeric = z.union([z.string().min(1), z.number()]).transform(Number).pipe(z.number().finite());
 const positive = numeric.pipe(z.number().positive());
@@ -21,11 +22,17 @@ export async function fetchMarketSnapshot(input: unknown, request: typeof fetch 
     const duration = Number.parseInt(interval) * (interval.endsWith('m') ? 60000 : interval.endsWith('h') ? 3600000 : 86400000);
     const rows = z.array(candle).max(5001).parse(await info({ type: 'candleSnapshot', req: { coin, interval, startTime: at - duration * 5000, endTime: at } }));
     const closed = rows.filter(row => row.T < at).sort((a,b) => a.t-b.t);
-    if (!closed.length || at - closed.at(-1)!.T > duration * 2) throw new Error('Closed candles missing or stale');
+    if (!closed.length || at - closed.at(-1)!.T > duration * 2) throw new StaleMarketDataError();
     if (closed.some((row,i) => row.s !== coin || row.i !== interval || row.T < row.t || row.h < Math.max(row.o,row.c,row.l) || row.l > Math.min(row.o,row.c) || (i > 0 && row.t !== closed[i-1]!.t + duration))) throw new Error('Invalid or incomplete candles');
     candles[interval] = closed.map(row => ({ closedAt: row.T, open: row.o, high: row.h, low: row.l, close: row.c, volume: row.v }));
   }
-  if (Date.now() - at > 60000) throw new Error('Snapshot fetch took too long');
+  const completedAt = Date.now();
+  if (completedAt < at) throw new StaleMarketDataError();
+  for (const [interval, rows] of Object.entries(candles)) {
+    const duration = Number.parseInt(interval) * (interval.endsWith('m') ? 60000 : interval.endsWith('h') ? 3600000 : 86400000);
+    if (completedAt - rows.at(-1)!.closedAt > duration * 2) throw new StaleMarketDataError();
+  }
+  if (completedAt - at > 60000) throw new Error('Snapshot fetch took too long');
   return { market: args.market, source: 'Hyperliquid mainnet', fetchedAt: new Date(at).toISOString(), price: context.markPx, funding: context.funding, candles };
 }
 

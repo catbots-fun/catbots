@@ -85,10 +85,10 @@ it('does not deliver a queued recovery from a superseded deployment',async()=>{
  await monitor.scan([{...run,id:'replacement'}],31000);
  expect(delivered.map(event=>[event.deploymentId,event.phase])).toEqual([['run','detected'],['replacement','detected']]);
 });
-it.each(['snapshot_unavailable','position_mismatch'] as const)('records a typed %s incident through stop until the cause is cleared',async failureCode=>{
+it.each(['snapshot_unavailable','position_mismatch','market_data_stale'] as const)('records a typed %s incident through stop until the cause is cleared',async failureCode=>{
  const monitor=new RuntimeIncidents(fixture(),async()=>{});
  await monitor.scan([{...run,failureCode}],1000);
- const code=failureCode==='snapshot_unavailable'?'exchange_snapshot_unavailable':'position_mismatch';
+ const code=failureCode==='snapshot_unavailable'?'exchange_snapshot_unavailable':failureCode;
  expect(monitor.list('bot').some(event=>event.code===code&&event.phase==='detected')).toBe(true);
  await monitor.scan([{...run,status:'stopped',failureCode}],2000);
  expect(monitor.list('bot').filter(event=>event.code===code)).toHaveLength(1);

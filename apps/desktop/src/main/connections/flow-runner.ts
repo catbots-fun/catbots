@@ -5,6 +5,7 @@ import {
 } from "./native-protection";
 import { perpSize } from "./hyperliquid-precision";
 import { FlowAuditStore, type FlowAuditEvent } from './flow-audit';
+import { StaleMarketDataError } from '../nodes/market-data-error';
 import { createHash, randomUUID } from "node:crypto";
 import {
   existsSync,
@@ -728,7 +729,10 @@ export class FlowRunner {
   }
   private async runtimeSnapshot(venue: FlowVenue, times: string[]) {
     try { return await venue.snapshot(times); }
-    catch { throw new RuntimeObservationError('snapshot_unavailable', 'Exchange snapshot unavailable. Review connectivity and account access before restarting.'); }
+    catch (error) {
+      if (error instanceof StaleMarketDataError) throw new RuntimeObservationError('market_data_stale', 'Closed candles missing or stale. Review market data before restarting.');
+      throw new RuntimeObservationError('snapshot_unavailable', 'Exchange snapshot unavailable. Review connectivity and account access before restarting.');
+    }
   }
   connectionRunning(connectionId: string) {
     return [...new Set([...this.active.keys(), ...this.reconciling])].some(
