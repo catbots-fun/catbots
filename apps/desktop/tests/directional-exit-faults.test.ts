@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { Fill, FlowDocument, OrderPlan } from '@catbots/strategy-runtime';
 import { FlowRunner } from '../src/main/connections/flow-runner';
+import { fetchMarketSnapshot } from '../src/main/nodes/market-snapshot';
 import { OrderRejectedError, type FlowVenue } from '../src/main/connections/flow-venue';
 
 const dirs: string[] = [];
@@ -157,6 +158,19 @@ it('classifies a failed pre-order refresh without submitting the exit',async()=>
  expect(f.runner.get(f.target.botId)).toMatchObject({status:'failed',failureCode:'snapshot_unavailable'});
  expect(f.submitted).toHaveLength(1);
  expect(JSON.stringify(f.runner.auditHistory(f.target.botId))).not.toContain('SECRET');
+});
+it('retains stale-candle classification from the market reader without submitting an exit',async()=>{
+ const f=await entered(true);
+ f.venue.snapshot=async()=>{
+   const request:typeof fetch=async(_url,init)=>JSON.parse(String(init?.body)).type==='metaAndAssetCtxs'
+     ? Response.json([{universe:[{name:'SOL'}]},[{markPx:'100',funding:'0'}]]) : Response.json([]);
+   await fetchMarketSnapshot({action:'market_snapshot',market:'SOL-PERP',timeframes:['1m']},request);
+   throw new Error('Expected missing candles to fail');
+ };
+ await vi.advanceTimersByTimeAsync(5000);
+ expect(f.runner.get(f.target.botId)).toMatchObject({status:'failed',failureCode:'market_data_stale'});
+ expect(f.reopen().get(f.target.botId)?.failureCode).toBe('market_data_stale');
+ expect(f.submitted).toHaveLength(1);
 });
 it('clears the mismatch cause only after verified close inventory',async()=>{
  const f=await entered(true);f.exchange.position=.1;await vi.advanceTimersByTimeAsync(5000);
